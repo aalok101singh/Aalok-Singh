@@ -36,7 +36,7 @@ export interface EmgView {
 }
 
 export interface FacDelta {
-  id: number; bedsFree: number; bedsTotal: number
+  id: number; bedsFree: number; bedsTotal: number; medStock: number
 }
 
 export interface KpiView {
@@ -46,6 +46,7 @@ export interface KpiView {
   missionsCompleted: number
   utilization: number
   costMean: { responseS: number; onSceneS: number; transportS: number; waitS: number }
+  costSum: { responseS: number; onSceneS: number; transportS: number; waitS: number }
   facLoad: { id: number; name: string; loadPct: number }[]
 }
 
@@ -82,6 +83,7 @@ export interface StateMsg {
   clockS: number
   ambs: AmbDelta[]
   emgs: EmgView[]
+  emgsTotal: number
   facDeltas: FacDelta[]
   events: { id: number; tS: number; kind: string; text: string; emgId?: number }[]
   traces: DecisionTrace[]

@@ -11,6 +11,49 @@ export interface GraphView {
 
 const INF = Infinity
 
+// Scratch-array reuse (D5.3): typed arrays are cached per nodeCount and refilled per call,
+// removing ~1 MB of allocation per search on 50K-node graphs.
+const scratch = new Map<string, Float64Array | Int32Array>()
+function f64(name: string, n: number): Float64Array {
+  const key = `${name}:${n}`
+  let a = scratch.get(key) as Float64Array | undefined
+  if (!a) { a = new Float64Array(n); scratch.set(key, a) }
+  a.fill(INF)
+  return a
+}
+function i32(name: string, n: number): Int32Array {
+  const key = `${name}:${n}`
+  let a = scratch.get(key) as Int32Array | undefined
+  if (!a) { a = new Int32Array(n); scratch.set(key, a) }
+  a.fill(-1)
+  return a
+}
+
+// Reverse-CSR cache (D14): built once per graph instead of per bidirectional() call.
+const revCache = new WeakMap<object, { off: Uint32Array; dst: Uint32Array; w: Uint32Array; fwd: Int32Array }>()
+function reverseOf(g: GraphView): { off: Uint32Array; dst: Uint32Array; w: Uint32Array; fwd: Int32Array } {
+  let rev = revCache.get(g)
+  if (rev) return rev
+  const n = g.nodeCount
+  const off = new Uint32Array(n + 1)
+  for (let e = 0; e < g.adjDst.length; e++) off[g.adjDst[e] + 1]++
+  for (let i = 0; i < n; i++) off[i + 1] += off[i]
+  const dst = new Uint32Array(g.adjDst.length)
+  const w = new Uint32Array(g.adjW.length)
+  const fwd = new Int32Array(g.adjDst.length) // reverse slot -> forward edge index (closure check)
+  const cursor = Uint32Array.from(off)
+  for (let u = 0; u < n; u++) {
+    for (let e = g.adjOff[u]; e < g.adjOff[u + 1]; e++) {
+      const v = g.adjDst[e]
+      const slot = cursor[v]++
+      dst[slot] = u; w[slot] = g.adjW[e]; fwd[slot] = e
+    }
+  }
+  rev = { off, dst, w, fwd }
+  revCache.set(g, rev)
+  return rev
+}
+
 function finish(t0: number, stats: PathResult['stats']): PathResult['stats'] {
   return { ...stats, ms: performance.now() - t0 }
 }
@@ -48,9 +91,9 @@ export function dijkstra(
   const t0 = performance.now()
   const stats = { ms: 0, expanded: 0, relaxed: 0, heapOps: 0 }
   const n = g.nodeCount
-  const dist = new Float64Array(n).fill(INF)
-  const parent = new Int32Array(n).fill(-1)
-  const best = new Float64Array(n).fill(INF)
+  const dist = f64('dij.dist', n)
+  const parent = i32('dij.parent', n)
+  const best = f64('dij.best', n)
   const heap = new MinHeap(1 << 12)
   dist[s] = 0; best[s] = 0
   heap.push(0, s)
@@ -78,6 +121,7 @@ export function dijkstra(
     path: settled && t !== null ? reconstruct(parent, t) : [],
     found: settled || t === null,
     stats: finish(t0, stats),
+    distArr: t === null ? best : undefined, // multi-source flood: caller reads best[node]
   }
 }
 
@@ -91,24 +135,11 @@ export function bidirectional(
   const stats = { ms: 0, expanded: 0, relaxed: 0, heapOps: 0 }
   const n = g.nodeCount
 
-  // reverse CSR (cached per graph instance by caller via prepareReverse when hot)
-  const radjOff = new Uint32Array(n + 1)
-  for (let e = 0; e < g.adjDst.length; e++) radjOff[g.adjDst[e] + 1]++
-  for (let i = 0; i < n; i++) radjOff[i + 1] += radjOff[i]
-  const radjDst = new Uint32Array(g.adjDst.length)
-  const radjW = new Uint32Array(g.adjW.length)
-  const radjFwdIdx = new Int32Array(g.adjDst.length) // reverse slot -> forward edge index (closure check)
-  const cursor = Uint32Array.from(radjOff)
-  for (let u = 0; u < n; u++) {
-    for (let e = g.adjOff[u]; e < g.adjOff[u + 1]; e++) {
-      const v = g.adjDst[e]
-      const slot = cursor[v]++
-      radjDst[slot] = u; radjW[slot] = g.adjW[e]; radjFwdIdx[slot] = e
-    }
-  }
+  // reverse CSR — cached per graph instance (D14)
+  const { off: radjOff, dst: radjDst, w: radjW, fwd: radjFwdIdx } = reverseOf(g)
 
-  const dF = new Float64Array(n).fill(INF), dB = new Float64Array(n).fill(INF)
-  const pF = new Int32Array(n).fill(-1), pB = new Int32Array(n).fill(-1)
+  const dF = f64('bi.dF', n), dB = f64('bi.dB', n)
+  const pF = i32('bi.pF', n), pB = i32('bi.pB', n)
   const hF = new MinHeap(1 << 11), hB = new MinHeap(1 << 11)
   dF[s] = 0; dB[t] = 0
   hF.push(0, s); hB.push(0, t)
@@ -173,10 +204,10 @@ export function astar(
   const t0 = performance.now()
   const stats = { ms: 0, expanded: 0, relaxed: 0, heapOps: 0 }
   const n = g.nodeCount
-  const M_PER_S_MAX = 60 * 1000 / 3600
-  const gScore = new Float64Array(n).fill(INF)
-  const parent = new Int32Array(n).fill(-1)
-  const closedStale = new Float64Array(n).fill(INF) // min f ever pushed — lazy deletion filter
+  const M_PER_S_MAX = 80 * 1000 / 3600 // must equal max SPEED_KMH for admissibility
+  const gScore = f64('astar.g', n)
+  const parent = i32('astar.parent', n)
+  const closedStale = f64('astar.stale', n) // min f ever pushed — lazy deletion filter
   const heap = new MinHeap(1 << 12)
   const hv = (u: number): number => haversineM(g.lat[u], g.lng[u], g.lat[t], g.lng[t]) / M_PER_S_MAX
   gScore[s] = 0

@@ -5,7 +5,7 @@ export const CONST = {
   HANDOVER_SERVICE_S: 900,
   RESTOCK_PERIOD_S: 1800,
   BED_OCCUPY_S: 28800,
-  SPEED_KMH: [60, 40, 25],
+  SPEED_KMH: [80, 50, 30],
   WEATHER_MAX_MULT: 1.5,
   SEVERITY_RANK: { ECHO: 0, DELTA: 1, CHARLIE: 2, BRAVO: 3, ALPHA: 4 } as Record<string, number>,
   BATCH_MAX: 5,

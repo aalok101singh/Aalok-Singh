@@ -43,25 +43,27 @@ Every dispatch runs an 8-stage pipeline:
 Cost model per mission: `travel + on-scene (600 s "platinum ten") + transport + wait`, where
 `wait(facility) = ceil(activeInbound / max(1, bedsFree)) × 900 s`.
 
+Roads: an arterial highway skeleton (80 km/h) over district roads (50 km/h) and village roads (30 km/h); monsoon zones multiply drive times up to 1.5×.
+
 ### Algorithms & complexity
 
 | Algorithm | Complexity | Notes |
 |---|---|---|
 | Dijkstra | O((V+E) log V) | early exit at target |
-| Bidirectional Dijkstra | O(2·b^(d/2)) | ≈2× practical speedup; stops when fronts meet |
-| A\* | O((V+E) log V) bound | heuristic = haversine / 60 km/h — admissible (60 km/h is max road speed) |
+| Bidirectional Dijkstra | O(2·b^(d/2)) | two search fronts meet in the middle; reverse graph cached per map |
+| A\* | O((V+E) log V) bound | heuristic = haversine / 80 km/h — admissible (80 km/h is max road speed) |
 
 ### Measured benchmarks (FULL world — 50,000 nodes · 344,100 directed edges · 200 random pairs)
 
 | Algorithm | mean ms | p95 ms | mean expanded | mean relaxed | heapOps |
 |---|---|---|---|---|---|
-| Dijkstra | 7.48 | 14.74 | 25,444 | 175,346 | 72,729 |
-| Bidirectional | 9.47 | 16.72 | 18,075 | 124,615 | 51,955 |
-| A\* | **6.50** | 15.55 | **16,807** | **115,930** | **50,331** |
+| Dijkstra | 6.27 | 12.30 | 25,535 | 176,967 | 71,849 |
+| Bidirectional | **3.52** | **8.43** | 15,251 | 105,789 | 43,466 |
+| A\* | 3.88 | 11.61 | **12,243** | **85,016** | **35,609** |
 
-Graph: 1 component · heap microbench ≈ **9.87M push/pop ops/sec** · world generation ≈ 3.6 s · CSR memory ≈ 5 MB typed arrays @ 50K nodes / 344K edges. Run the suite yourself in-app: **Benchmarks tab → "Run suite (200 random s-t pairs)"**.
+Graph: 1 component · heap microbench ≈ **50M push/pop ops/sec** (random keys, result consumed) · world generation ≈ 3.5 s · CSR memory ≈ 5 MB typed arrays @ 50K nodes / 344K edges. Run the suite yourself in-app: **Speed Tests tab**.
 
-A\* wins on every counter (fewest expansions, fewest relaxations, fewest heap operations) because the haversine heuristic prunes the search cone; bidirectional expands less than Dijkstra but pays meet-checking overhead at this scale.
+A\* touches the fewest junctions and roads (the haversine heuristic focuses the search); bidirectional is the fastest wall-clock because two half-depth fronts meet early. All three return the same fastest route — the difference is how much of the map each one has to look at.
 
 ### SLA targets (to scene arrival)
 

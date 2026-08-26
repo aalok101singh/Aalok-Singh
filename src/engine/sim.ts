@@ -2,7 +2,7 @@
 import { CONST } from './const'
 import { astar } from './pathfind'
 import type { GraphView } from './pathfind'
-import { batchAssign, buildTrace, evaluate } from './dispatch'
+import { batchAssign, buildTrace, evaluate, triageCompare } from './dispatch'
 import type { AmbView, MissionPhaseRef } from './dispatch'
 import { dispenseFEFO, restockFacility } from './resources'
 import { expSeconds, mulberry32 } from './rng'
@@ -21,6 +21,7 @@ export interface SimEvent {
 export interface RuntimeEmergency extends Emergency {
   slaImpossible: boolean
   escalateAtS: number
+  routeFails?: number
 }
 
 export interface MissionRuntime {
@@ -65,7 +66,7 @@ export class SimEngine {
   manual = false
   wavefront = false
   batchOptimal = true
-  ambientArrivals = true
+  ambientArrivals = false
   influxUntilS = -1
 
   private rng: Rng
@@ -192,23 +193,26 @@ export class SimEngine {
     return this.createEmergency(v, u, sp, c)
   }
 
-  createEmergency(villageNode: number, urgency: Urgency, need: Specialty, caller: Emergency['caller']): RuntimeEmergency {
-    const key = `${villageNode}:${need}`
-    const last = this.dedupe.get(key)
-    if (last !== undefined && this.clockS - last < CONST.DEDUPE_WINDOW_S) {
+  createEmergency(villageNode: number, urgency: Urgency, need: Specialty, caller: Emergency['caller'], opts?: { dedupe?: boolean }): RuntimeEmergency {
+    if (opts?.dedupe !== false) {
+      const key = `${villageNode}:${need}`
+      const last = this.dedupe.get(key)
+      if (last !== undefined && this.clockS - last < CONST.DEDUPE_WINDOW_S) {
+        this.dedupe.set(key, this.clockS)
+        this.push('DEDUPED', `duplicate request merged: ${nameOf(this.world, villageNode)} (${urgency})`)
+        const existing = [...this.emergencies.values()].reverse().find((e) => e.village === villageNode && e.need === need)
+        if (existing) return existing
+      }
       this.dedupe.set(key, this.clockS)
-      this.push('DEDUPED', `duplicate request merged: ${nameOf(this.world, villageNode)} (${urgency})`)
-      const existing = [...this.emergencies.values()].reverse().find((e) => e.village === villageNode && e.need === need)
-      if (existing) return existing
     }
-    this.dedupe.set(key, this.clockS)
 
-    // SLA-impossible pre-check (§6.3 warning): haversine/25kmh lower bound vs SLA
-    const ambView = this.availableAmbulances()[0]
+    // SLA-impossible pre-check (§6.3 warning): O(1) haversine / max-speed lower bound vs SLA
     let impossible = false
-    if (ambView) {
-      const d = astar(this.g, ambView.at, villageNode).dist
-      impossible = !isFinite(d) || d > CONST.SLA_S[urgency] * 2.5
+    const amb0 = this.world.ambulances.find((a) => a.state === 'AVAILABLE')
+    if (amb0) {
+      const straightM = hav(this.world.lat[amb0.at], this.world.lng[amb0.at], this.world.lat[villageNode], this.world.lng[villageNode])
+      const lowerBoundS = straightM / ((CONST.SPEED_KMH[0] * 1000) / 3600)
+      impossible = lowerBoundS > CONST.SLA_S[urgency] * 2.5
     }
     const emg: RuntimeEmergency = {
       id: this.emgSeq++, village: villageNode, urgency, need, caller,
@@ -235,6 +239,7 @@ export class SimEngine {
     if (!e) return null
     const ctx = {
       g: this.g, facilities: this.world.facilities, closedEdges: this.closedEdges, clockS: this.clockS,
+      nodeMult: this.nodeMultCache ?? undefined,
       onPathfind: this.wavefront && this.onWavefront ? this.onWavefront : undefined,
     }
     const refs = this.phaseRefs()
@@ -299,6 +304,7 @@ export class SimEngine {
     }
     const ctx = {
       g: this.g, facilities: this.world.facilities, closedEdges: this.closedEdges, clockS: this.clockS,
+      nodeMult: this.nodeMultCache ?? undefined, // weather zones slow routing (§8)
       onPathfind: this.wavefront && this.onWavefront ? this.onWavefront : undefined,
     }
     const refs = this.phaseRefs()
@@ -311,22 +317,35 @@ export class SimEngine {
     }
     this.degradedBannerShown = false
 
-    if (queued.length >= 2 && queued.length <= CONST.BATCH_MAX) {
-      const { assignments, evalsByEmg, optimalTotal, greedyTotal } = batchAssign(ctx, queued, ambs, refs)
+    // batch-optimal window: 2..BATCH_MAX when the toggle is on; beyond BATCH_MAX,
+    // batch the top-5 by triage order and greedy the remainder (D6)
+    const byTriage = [...queued].sort((a, b) => triageCompare(a, b, () => 0))
+    const batchSlice = this.batchOptimal && queued.length >= 2 ? byTriage.slice(0, CONST.BATCH_MAX) : []
+    const rest = batchSlice.length > 0 ? byTriage.slice(batchSlice.length) : byTriage
+
+    if (batchSlice.length >= 2) {
+      const { assignments, evalsByEmg, optimalTotal, greedyTotal } = batchAssign(ctx, batchSlice, ambs, refs)
       const delta = optimalTotal - greedyTotal
       this.lastTraces = []
-      for (const emg of queued) {
+      for (const emg of batchSlice) {
         const chosen = assignments.get(emg.id)
         if (!chosen) continue
         const trace = buildTrace(emg, evalsByEmg.get(emg.id) ?? [], chosen, (id) => this.world.ambulances[id].callsign, delta)
         this.executeAssignment(emg, chosen.ambId, chosen.facEval.facilityId, trace)
         this.lastTraces.push(trace)
+        ambs = this.availableAmbulances() // D7: never double-book from a stale list
       }
-      return
     }
 
-    for (const emg of queued) {
-      const { evals, best } = evaluate(ctx, emg.village, emg.need, ambs, refs)
+    for (const emg of rest) {
+      if (this.world.ambulances[0] && this.availableAmbulances().length === 0) {
+        if (!this.degradedBannerShown) {
+          this.degradedBannerShown = true
+          this.push('ALERT', 'fleet exhausted — remaining calls queued')
+        }
+        break
+      }
+      const { evals, best } = evaluate(ctx, emg.village, emg.need, this.availableAmbulances(), refs)
       if (!best) {
         // all routes failed or no units — mark unreachable if no eligible route exists anywhere
         if (!evals.some((ev) => ev.eligible)) {
@@ -343,12 +362,19 @@ export class SimEngine {
   private executeAssignment(emg: RuntimeEmergency, ambId: number, facId: number, trace: DecisionTrace): void {
     const amb = this.world.ambulances[ambId]
     const fac = this.world.facilities[facId]
-    const resp = astar(this.g, amb.at, emg.village, { closed: this.closedEdges })
-    const trans = astar(this.g, emg.village, fac.node, { closed: this.closedEdges })
+    const resp = astar(this.g, amb.at, emg.village, { closed: this.closedEdges, nodeMult: this.nodeMultCache ?? undefined })
+    const trans = astar(this.g, emg.village, fac.node, { closed: this.closedEdges, nodeMult: this.nodeMultCache ?? undefined })
     if (!resp.found || !trans.found) {
-      this.push('UNREACHABLE', `${amb.callsign} could not reach scene/facility — requeue`, emg.id)
+      emg.routeFails = (emg.routeFails ?? 0) + 1
+      if (emg.routeFails >= 2) {
+        emg.status = 'UNREACHABLE'
+        this.push('UNREACHABLE', `${nameOf(this.world, emg.village)} UNREACHABLE — no drivable route for any unit`, emg.id)
+      } else {
+        this.push('ALERT', `${amb.callsign} could not reach scene — retrying with next-best`, emg.id)
+      }
       return
     }
+    if (this.traces.length > 200) this.traces.splice(0, this.traces.length - 200) // D29
     const mission: Mission = {
       id: this.missionSeq++, emg: emg.id, amb: ambId, facility: facId,
       tDispatch: this.clockS, tSceneArrive: -1, tSceneLeave: -1, tFacilityArrive: -1,
@@ -571,8 +597,8 @@ export class SimEngine {
         return 'reopened'
       case 'WEATHER_SPIKE':
         this.weatherForceMm = 5
-        this.applyWeatherMultiplier()
-        this.push('WEATHER', 'monsoon spike ×1.5 in 3 zones')
+        this.nodeMultCache = this.applyWeatherMultiplier() // zones now actually slow routing (D9)
+        this.push('WEATHER', 'monsoon spike — drives 1.5× slower in 3 zones')
         return 'weather spiked'
       case 'DRAIN_BEDS_CHC': {
         const chcs = this.world.facilities.filter((f) => f.tier === 'CHC')
@@ -615,6 +641,7 @@ export class SimEngine {
   applyWeatherMultiplier(): Float32Array {
     const mult = this.weatherForceMm !== null ? 1 + (Math.min(this.weatherForceMm, 5) / 5) * 0.5 : 1
     const arr = new Float32Array(this.world.nodeCount)
+    arr.fill(1)
     if (mult <= 1) return arr
     const zones = seededZones(this.seed)
     for (const z of zones) {
@@ -655,28 +682,32 @@ export class SimEngine {
   // ---- director scripts (§13.1) ----
   // Official Mock: nearest PHC lacks CARDIOLOGY (breadcrumb NO_SPECIALTY), CHC ≈25km has cardiologist.
   runMockScript(): { villageName: string; villageNode: number; facBName: string; facBId: number; facCName: string; facCId: number } | null {
-    // Official Mock: nearest PHC lacks CARDIOLOGY (breadcrumb NO_SPECIALTY), CHC ≈25km has cardiologist.
-    // Deterministic config: strip CARDIOLOGY everywhere except designated C; B = nearest PHC to village.
+    // Official Mock: the NEARBY clinic lacks CARDIOLOGY (visible rejection), a Health Centre
+    // ≈25 km out has the cardiologist on duty (D11/D12).
     const village = this.world.villages.find((v) => v.name === 'Rampura Kalan') ?? this.world.villages[0]
+    const dist = (n: number): number => hav(this.world.lat[village.node], this.world.lng[village.node], this.world.lat[n], this.world.lng[n])
+    const phcs = [...this.world.facilities].filter((f) => f.tier === 'PHC').sort((a, b) => dist(a.node) - dist(b.node))
+    const chcPool = [...this.world.facilities].filter((f) => f.tier === 'CHC')
+      .sort((a, b) => Math.abs(dist(a.node) - 25000) - Math.abs(dist(b.node) - 25000))
+    if (!phcs.length || !chcPool.length) return null
+    const facB = phcs[0]
+    const facC = chcPool[0] // CHC nearest to ~25 km (D11)
+    // organizer script: exactly ONE facility keeps CARDIOLOGY — the nearby clinic visibly rejects (NO_SPECIALTY)
     for (const f of this.world.facilities) {
+      if (f.id === facC.id) continue
       f.specs = f.specs.filter((s) => s !== 'CARDIOLOGY')
       f.doctors = f.doctors.filter((d) => d.spec !== 'CARDIOLOGY')
     }
-    const dist = (n: number): number => hav(this.world.lat[village.node], this.world.lng[village.node], this.world.lat[n], this.world.lng[n])
-    const phcs = [...this.world.facilities].filter((f) => f.tier === 'PHC').sort((a, b) => dist(a.node) - dist(b.node))
-    const chcPool = [...this.world.facilities].filter((f) => f.tier === 'CHC').sort((a, b) => dist(b.node) - dist(a.node))
-    if (!phcs.length || !chcPool.length) return null
-    const facB = phcs[0]
-    const facC = chcPool[0] // farthest CHC ≈ the "25km away" one
-    facC.specs.push('CARDIOLOGY')
+    if (!facC.specs.includes('CARDIOLOGY')) facC.specs.push('CARDIOLOGY')
     facC.doctors.push({ spec: 'CARDIOLOGY', onDutyUntil: this.clockS + 8 * 3600 })
-    const emg = this.spawnRandomEmergency(village.node, 'DELTA', 'CARDIOLOGY', 'FAMILY')
-    void emg
+    this.spawnRandomEmergency(village.node, 'DELTA', 'CARDIOLOGY', 'FAMILY')
+    setTimeoutSim(this, 2400, () => { this.push('ALERT', 'SCENARIO_END · Official Mock complete — press Report (R) for the scorecard') })
     return { villageName: village.name, villageNode: village.node, facBName: facB.name, facBId: facB.id, facCName: facC.name, facCId: facC.id }
   }
 
   runMciScript(): void {
     // highway collision: 12 casualties over 60s RED/YELLOW/GREEN -> DELTA/CHARLIE/BRAVO
+    // dedupe opt-out: several patients at one site with the same need are real, not duplicates (D4)
     const site = this.world.villages[(this.rng() * this.world.villages.length) | 0].node
     const tags: [Urgency, Specialty, number][] = [
       ['DELTA', 'TRAUMA', 4], ['CHARLIE', 'SURGERY', 5], ['BRAVO', 'GENERAL', 3],
@@ -685,26 +716,34 @@ export class SimEngine {
     for (const [u, sp, n] of tags) {
       for (let i = 0; i < n; i++) {
         setTimeoutSim(this, delay, () => {
-          const emg = this.spawnRandomEmergency(site, u, sp, 'ASHA')
-          void emg
+          this.createEmergency(site, u, sp, 'ASHA', { dedupe: false })
         })
         delay += 5
       }
     }
     this.influxUntilS = this.clockS + 300
+    setTimeoutSim(this, 900, () => { this.push('ALERT', 'SCENARIO_END · Mass Casualty complete — press Report (R) for the scorecard') })
   }
 
   runDisasterScript(): void {
     this.weatherForceMm = 5
     this.chaos('WEATHER_SPIKE')
     for (let i = 0; i < 3; i++) this.chaos('CLOSE_RANDOM_ROAD')
-    // bridge cut: island one village by closing all its incident edges
+    // bridge cut: island one village by closing its incident edges in BOTH directions (D24)
     const island = this.world.villages.find((v) => !this.isFacilityNode(v.node)) ?? this.world.villages[0]
-    for (let e = this.g.adjOff[island.node]; e < this.g.adjOff[island.node + 1]; e++) this.closedEdges.add(e)
+    const node = island.node
+    for (let e = this.g.adjOff[node]; e < this.g.adjOff[node + 1]; e++) {
+      this.closedEdges.add(e)
+      const v = this.g.adjDst[e]
+      for (let re = this.g.adjOff[v]; re < this.g.adjOff[v + 1]; re++) {
+        if (this.g.adjDst[re] === node) this.closedEdges.add(re)
+      }
+    }
     this.push('CLOSURE', `bridge cut: ${island.name} isolated (temporary island)`)
     for (let i = 1; i <= 8; i++) {
       setTimeoutSim(this, i * 22, () => { this.spawnRandomEmergency(undefined, undefined, undefined, 'PHC_REFERRAL') })
     }
+    setTimeoutSim(this, 400, () => { this.push('ALERT', 'SCENARIO_END · Monsoon Disaster running — press Report (R) anytime') })
   }
 
   isFacilityNode(node: number): boolean {
@@ -784,9 +823,11 @@ function weighted<T>(rng: Rng, pairs: readonly [T, number][]): T {
   return pairs[pairs.length - 1][0]
 }
 export function nameOf(world: World, node: number): string {
-  const v = world.villages.find((vv) => vv.node === node)
-  return v?.name ?? `node ${node}`
+  let m = nameCache.get(world)
+  if (!m) { m = new Map(); for (const vv of world.villages) m.set(vv.node, vv.name); nameCache.set(world, m) }
+  return m.get(node) ?? `node ${node}`
 }
+const nameCache = new WeakMap<World, Map<number, string>>()
 function urgency(u: Urgency): string { return u }
 function pct(x: number): string { return `${Math.round(x * 100)}%` }
 function fmtDur(sec: number): string {

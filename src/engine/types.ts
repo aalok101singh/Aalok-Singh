@@ -60,4 +60,6 @@ export interface World {
 export interface PathResult {
   dist: number; path: NodeId[]; found: boolean;
   stats: { ms: number; expanded: number; relaxed: number; heapOps: number };
+  /** Full distance array — only when target is null (multi-source flood). */
+  distArr?: Float64Array;
 }

@@ -6,7 +6,7 @@ export function facilityEligible(f: Facility, need: Specialty, clockS: number): 
   if (!f.specs.includes(need)) return { ok: false, reject: 'NO_SPECIALTY' }
   if (!doctorOnDuty(f, need, clockS)) return { ok: false, reject: 'NO_SPECIALTY' }
   if (f.bedsFree <= 0) return { ok: false, reject: 'NO_BEDS' }
-  if (!medsCover(f, need)) return { ok: false, reject: 'NO_MEDS' }
+  if (!medsCover(f, need, clockS)) return { ok: false, reject: 'NO_MEDS' }
   return { ok: true }
 }
 
@@ -18,9 +18,9 @@ export function drugFor(need: Specialty): string {
   return CONST.DRUG_FOR[need] ?? 'Paracetamol'
 }
 
-export function medsCover(f: Facility, need: Specialty): boolean {
+export function medsCover(f: Facility, need: Specialty, clockS = 0): boolean {
   const drug = drugFor(need)
-  return f.meds.some((m) => m.drug === drug && m.qty > 0 && m.expiresAt > 0)
+  return f.meds.some((m) => m.drug === drug && m.qty > 0 && m.expiresAt > clockS) // in-date only (D39)
 }
 
 /** FEFO reserve: decrement first-expiring batch with stock. Returns doses reserved (may be < requested). */

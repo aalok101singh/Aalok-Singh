@@ -1,5 +1,5 @@
 import { actions, ensureWorker, getSnapshot } from '../state/store'
-import { t, getLang, setLang } from '../i18n/t'
+import { t, getLang } from '../i18n/t'
 
 function clockStr(clockS: number): string {
   const h = Math.floor(clockS / 3600), m = Math.floor((clockS % 3600) / 60)
@@ -8,7 +8,7 @@ function clockStr(clockS: number): string {
 
 export default function TopBar(): JSX.Element {
   const s = getSnapshot()
-  const toggleLang = (): void => { setLang(getLang() === 'en' ? 'hi' : 'en'); }
+  const toggleLang = (): void => { actions.setLang(getLang() === 'en' ? 'hi' : 'en') }
   return (
     <div className="flex h-14 items-center gap-4 border-b border-border bg-surface px-4">
       <div className="font-display text-lg font-bold tracking-tight">CareGrid <span className="text-primary">◆</span></div>

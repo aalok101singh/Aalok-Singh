@@ -11,14 +11,15 @@ import type { Urgency } from '../engine/types'
 import type { World } from '../engine/types'
 import type { AmbDelta, BenchResult, BenchRow, EmgView, FromWorker, KpiView, ToWorker } from './protocol'
 
-let world: World | null = null
 let gv: GraphView | null = null
 let seed = 42
+let presetUsed: 'FULL' | 'MED' | 'DEMO' = 'FULL'
 let running = false
 let speedMult: 1 | 60 | 90 = 1
 let manualMode = false
 let clockS = 0
 let pumpTimer: ReturnType<typeof setInterval> | null = null
+let nameByNode = new Map<number, string>()
 
 // sim state owned here via dynamic import of SimEngine is unnecessary — import directly
 import { SimEngine } from '../engine/sim'
@@ -39,7 +40,8 @@ async function init(src: 'osm' | 'procedural', sd: number, preset: 'FULL' | 'MED
     } catch { /* procedural fallback */ }
   }
   if (!w) w = proceduralWorld(seed, preset)
-  world = w
+  presetUsed = preset
+  nameByNode = new Map(w.villages.map((v) => [v.node, v.name]))
   const cc = components(w)
   sim = new SimEngine(w, seed)
   gv = sim.g
@@ -100,8 +102,7 @@ function startPump(): void {
 }
 
 function villageName(node: number): string {
-  if (!world) return String(node)
-  return world.villages.find((v) => v.node === node)?.name ?? `node ${node}`
+  return nameByNode.get(node) ?? String(node) // O(1) — D27
 }
 
 function tierMap(f: (u: string) => number): Record<string, number> {
@@ -134,6 +135,11 @@ function postState(): void {
       missionId: e.missionId, bestEffort: e.slaImpossible,
     })
   }
+  // D28: cap the transported list — triage order, top-200 + aggregate count
+  const rank = CONST.SEVERITY_RANK as Record<string, number>
+  emgs.sort((a, b) => (rank[a.urgency] - rank[b.urgency]) || (a.filedAtS - b.filedAtS))
+  const emgsTotal = emgs.length
+  const emgsCapped = emgs.slice(0, 200)
   const kpis: KpiView = {
     p50ByTier: tierMap((u) => Math.round(percentile(s.kpis.responseByTier[u as Urgency], 50))),
     p90ByTier: tierMap((u) => Math.round(percentile(s.kpis.responseByTier[u as Urgency], 90))),
@@ -149,6 +155,7 @@ function postState(): void {
       transportS: Math.round(s.kpis.costSum.transportS / Math.max(1, s.kpis.missionsCompleted)),
       waitS: Math.round(s.kpis.costSum.waitS / Math.max(1, s.kpis.missionsCompleted)),
     },
+    costSum: { ...s.kpis.costSum },
     facLoad: s.world.facilities.map((f) => ({
       id: f.id, name: f.name,
       loadPct: f.bedsTotal === 0 ? 0 : Math.round(((f.bedsTotal - f.bedsFree) / f.bedsTotal) * 100),
@@ -156,14 +163,19 @@ function postState(): void {
   }
   post({
     type: 'STATE', tick: clockS, clockS: s.clockS,
-    ambs, emgs,
-    facDeltas: s.world.facilities.map((f) => ({ id: f.id, bedsFree: f.bedsFree, bedsTotal: f.bedsTotal })),
+    ambs,
+    facDeltas: s.world.facilities.map((f) => ({
+      id: f.id, bedsFree: f.bedsFree, bedsTotal: f.bedsTotal,
+      medStock: f.meds.reduce((acc, m) => acc + m.qty, 0),
+    })),
     events: s.events.slice(-40).map((ev) => ({ id: ev.id, tS: ev.tS, kind: ev.kind, text: ev.text, emgId: ev.emgId })),
     traces: s.traces.slice(-20),
     kpis,
     completed: s.completed.slice(-8).reverse(),
     closedEdges: [...s.closedEdges].slice(0, 500),
     running, speedMult, manual: manualMode,
+    emgs: emgsCapped,
+    emgsTotal,
   })
 }
 
@@ -171,9 +183,9 @@ self.onmessage = async (ev: MessageEvent<ToWorker>): Promise<void> => {
   const msg = ev.data
   switch (msg.type) {
     case 'INIT': await init(msg.world, msg.seed, msg.preset); break
-    case 'START': running = true; startPump(); break
-    case 'PAUSE': running = false; break
-    case 'SPEED': speedMult = msg.mult; break
+    case 'START': running = true; startPump(); postState(); break
+    case 'PAUSE': running = false; postState(); break // D2: echo state so the button flips to Resume
+    case 'SPEED': speedMult = msg.mult; postState(); break
     case 'DIRECTOR':
       if (!sim) break
       running = true // director scripts auto-start the clock (demo path: click → sim runs)
@@ -185,22 +197,34 @@ self.onmessage = async (ev: MessageEvent<ToWorker>): Promise<void> => {
       break
     case 'CHAOS':
       if (!sim) break
-      if (msg.action === 'RESET_SCENARIO') sim.reset()
-      else sim.chaos(msg.action)
+      if (msg.action === 'RESET_SCENARIO') {
+        // D8: a reset must restore the pristine world — rebuild the whole SimEngine from the seed
+        sim = new SimEngine(proceduralWorld(seed, presetUsed), seed)
+        gv = sim.g
+        running = false
+        if (pumpTimer !== null) { clearInterval(pumpTimer); pumpTimer = null }
+        clockS = 0
+      } else {
+        sim.chaos(msg.action)
+      }
       postState()
       break
     case 'MODE':
       manualMode = msg.manual
       if (sim) sim.manual = msg.manual
+      postState()
       break
     case 'BATCH_OPTIMAL':
       if (sim) sim.batchOptimal = msg.on
+      postState()
       break
     case 'AMBIENT':
       if (sim) sim.ambientArrivals = msg.on
+      postState()
       break
     case 'WAVEFRONT_MODE':
       if (sim) sim.wavefront = msg.on // engine streams frontier samples on pathfind (§10.3, wired in B4)
+      postState()
       break
     case 'RECOMMEND':
       post({ type: 'RECOMMENDATION', trace: sim?.recommend(msg.emgId) ?? null })
@@ -264,10 +288,11 @@ function benchSuite(runs: number): void {
 
 function heapMicro(): number {
   const h = new MinHeap(1024)
+  const rng = mulberry32(seed + 777)
   const t0 = performance.now()
   let acc = 0
-  for (let i = 0; i < 1_000_000; i++) { h.push(i & 1023, i & 1023); acc ^= h.pop()![0] }
+  for (let i = 0; i < 1_000_000; i++) { const k = (rng() * 1e6) | 0; h.push(k, k & 1023); acc = (acc + (h.pop()![0] as number)) | 0 }
   const dt = (performance.now() - t0) / 1000
-  void acc
+  if (acc === -137) console.log('unreachable') // defeat dead-code elimination (D16)
   return Math.round(1_000_000 / Math.max(dt, 0.001))
 }

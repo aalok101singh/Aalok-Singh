@@ -5,17 +5,6 @@ import { getGeometry, getSnapshot, onWavefront } from '../state/store'
 const URGENCY_COLOR: Record<string, string> = {
   ECHO: '#DC2626', DELTA: '#EA580C', CHARLIE: '#D97706', BRAVO: '#0284C7', ALPHA: '#64748B',
 }
-// map-like palette: majors warm tan with white casing, minors soft gray
-const ROAD_STYLE: { color: string; casing: boolean }[] = [
-  { color: '#C4B291', casing: true },   // cls 0 major highway
-  { color: '#D2C9B6', casing: true },   // cls 1 district road
-  { color: '#DCD8CE', casing: false },  // cls 2 village road
-]
-const ROAD_WIDTH: number[][] = [
-  [2.5, 2, 1.2],  // lod0 (zoomed out)
-  [3.5, 2.5, 1.6],// lod1
-  [5, 3.5, 2],    // lod2 (zoomed in)
-]
 
 interface View { cx: number; cy: number; scale: number } // center lat/lng; scale = screen px per meter
 
@@ -31,6 +20,8 @@ export default function MapCanvas(): JSX.Element {
   const [expandedN, setExpandedN] = useState(0)
   const [followOn, setFollowOn] = useState(false)
   const [hover, setHover] = useState<{ x: number; y: number; title: string; sub: string } | null>(null)
+  const fitScaleRef = useRef(0.011)
+  const imgsRef = useRef<{ amb: HTMLImageElement | null; hosp: HTMLImageElement | null; emg: HTMLImageElement | null }>({ amb: null, hosp: null, emg: null })
 
   useEffect(() => {
     const unsub = onWavefront((settled, frontier) => {
@@ -54,6 +45,16 @@ export default function MapCanvas(): JSX.Element {
     }
     resize()
     window.addEventListener('resize', resize)
+
+    // scenario icons (user-supplied art) — drawn once loaded, vector fallback until then
+    const loadImg = (src: string, key: 'amb' | 'hosp' | 'emg'): void => {
+      const im = new Image()
+      im.onload = () => { imgsRef.current[key] = im }
+      im.src = src
+    }
+    loadImg('/icons/ambulance.png', 'amb')
+    loadImg('/icons/hospital.png', 'hosp')
+    loadImg('/icons/emergency.png', 'emg')
 
     // ---- interaction ----
     let dragging = false
@@ -202,6 +203,7 @@ export default function MapCanvas(): JSX.Element {
         v.cy = (la0 + la1) / 2
         const fit = Math.min(wpx / Math.max(1, (lo1 - lo0) * 102000), hpx / Math.max(1, (la1 - la0) * 111320))
         v.scale = Math.max(0.004, fit * 0.95)
+        fitScaleRef.current = v.scale
         setZoomLabel(v.scale)
       }
 
@@ -242,58 +244,52 @@ export default function MapCanvas(): JSX.Element {
       }
 
       const zoom = v.scale
-      const lod = zoom < 0.04 ? 0 : zoom < 20 ? 1 : 2
+      const fit = fitScaleRef.current
+      const lod = zoom < fit * 3 ? 0 : zoom < fit * 12 ? 1 : 2 // fit-relative thresholds (D34)
       const minLa = v.cy - hpx / (2 * v.scale * 111320), maxLa = v.cy + hpx / (2 * v.scale * 111320)
       const minLo = v.cx - wpx / (2 * v.scale * 102000), maxLo = v.cx + wpx / (2 * v.scale * 102000)
 
-      // ---- roads: draw minors → majors so hierarchy reads; casing under majors ----
-      if (zoom >= 0.04) {
-        const closedSet = new Set(snap.closedEdges)
-        const hasClosures = closedSet.size > 0
+      // ---- roads: ONE edge walk builds every bucket as a Path2D (perf); majors drawn last with casing ----
+      {
+        const closedSet = snap.closedEdges.length > 0 ? new Set(snap.closedEdges) : null
         const off = geo.adjOff, adjDst = geo.adjDst
         const N = geo.lat.length
+        const p0 = new Path2D(), p1 = new Path2D(), p2 = new Path2D(), pc = new Path2D()
+        const ticks: number[] = []
+        const showMinors = zoom >= fit * 1.5
+        for (let u = 0; u < N; u++) {
+          const laU = geo.lat[u], loU = geo.lng[u]
+          const uIn = laU >= minLa && laU <= maxLa && loU >= minLo && loU <= maxLo
+          if (!uIn) continue
+          for (let e = off[u]; e < off[u + 1]; e++) {
+            const vv = adjDst[e]
+            if (vv <= u) continue
+            const laV = geo.lat[vv], loV = geo.lng[vv]
+            if (laV < minLa || laV > maxLa || loV < minLo || loV > maxLo) continue
+            const isClosed = closedSet?.has(e) ?? false
+            const cls = geo.adjCls[e]
+            if (!showMinors && !isClosed && cls === 2) continue // district view: arterial skeleton only (D35)
+            const [x0, y0] = toScreen(v, laU, loU, wpx, hpx)
+            const [x1, y1] = toScreen(v, laV, loV, wpx, hpx)
+            const path = isClosed ? pc : cls === 0 ? p0 : cls === 1 ? p1 : p2
+            path.moveTo(x0, y0)
+            path.lineTo(x1, y1)
+            if (isClosed) ticks.push((x0 + x1) / 2, (y0 + y1) / 2)
+          }
+        }
+        const widths = lod === 0 ? [2.5, 2, 1.2] : lod === 1 ? [3.5, 2.5, 1.6] : [5, 3.5, 2]
         ctx2d.lineCap = 'round'
         ctx2d.lineJoin = 'round'
-
-        const roadPass = (b: number, width: number, color: string): number[] => {
-          const ticks: number[] = []
-          ctx2d.lineWidth = width
-          ctx2d.strokeStyle = color
-          ctx2d.beginPath()
-          for (let u = 0; u < N; u++) {
-            const laU = geo.lat[u], loU = geo.lng[u]
-            if (laU < minLa || laU > maxLa || loU < minLo || loU > maxLo) continue
-            for (let e = off[u]; e < off[u + 1]; e++) {
-              const vv = adjDst[e]
-              if (vv <= u) continue
-              const isClosed = hasClosures && closedSet.has(e)
-              if (b === 3 ? !isClosed : isClosed || geo.adjCls[e] !== b) continue
-              const laV = geo.lat[vv], loV = geo.lng[vv]
-              if (laV < minLa || laV > maxLa || loV < minLo || loV > maxLo) continue
-              const [x0, y0] = toScreen(v, laU, loU, wpx, hpx)
-              const [x1, y1] = toScreen(v, laV, loV, wpx, hpx)
-              ctx2d.moveTo(x0, y0)
-              ctx2d.lineTo(x1, y1)
-              if (b === 3) ticks.push((x0 + x1) / 2, (y0 + y1) / 2)
-            }
-          }
-          ctx2d.stroke()
-          return ticks
-        }
-
-        const widths = ROAD_WIDTH[lod]
-        for (const b of [2, 1, 0]) {
-          const st = ROAD_STYLE[b]
-          const w = widths[b]
-          if (st.casing) roadPass(b, w + 2.5, 'rgba(255,255,255,0.95)')
-          roadPass(b, w, st.color)
-        }
-        if (hasClosures) {
-          const ticks = roadPass(3, widths[1] + 1, '#DC2626')
+        ctx2d.lineWidth = widths[2]; ctx2d.strokeStyle = '#DCD8CE'; ctx2d.stroke(p2)
+        ctx2d.lineWidth = widths[1] + 2.5; ctx2d.strokeStyle = 'rgba(255,255,255,0.95)'; ctx2d.stroke(p1)
+        ctx2d.lineWidth = widths[1]; ctx2d.strokeStyle = '#D2C9B6'; ctx2d.stroke(p1)
+        ctx2d.lineWidth = widths[0] + 2.5; ctx2d.strokeStyle = 'rgba(255,255,255,0.95)'; ctx2d.stroke(p0)
+        ctx2d.lineWidth = widths[0]; ctx2d.strokeStyle = '#C4B291'; ctx2d.stroke(p0)
+        if (ticks.length > 0) {
+          ctx2d.lineWidth = widths[1] + 1; ctx2d.strokeStyle = '#DC2626'; ctx2d.stroke(pc)
           for (let i = 0; i < ticks.length; i += 2) {
-            const mx = ticks[i], my = ticks[i + 1]
             ctx2d.beginPath()
-            ctx2d.moveTo(mx - 3, my - 3); ctx2d.lineTo(mx + 3, my + 3)
+            ctx2d.moveTo(ticks[i] - 3, ticks[i + 1] - 3); ctx2d.lineTo(ticks[i] + 3, ticks[i + 1] + 3)
             ctx2d.stroke()
           }
         }
@@ -368,7 +364,9 @@ export default function MapCanvas(): JSX.Element {
         ctx2d.fillStyle = '#FFFFFF'
         ctx2d.beginPath(); ctx2d.arc(x, y, 9, 0, Math.PI * 2); ctx2d.fill()
         ctx2d.stroke()
-        drawPerson(ctx2d, x, y, 5, col)
+        const emgImg = imgsRef.current.emg
+        if (emgImg) ctx2d.drawImage(emgImg, x - 8, y - 8, 16, 16)
+        else drawPerson(ctx2d, x, y, 5, col)
         if (followTargetRef.current === emg.id && followRef.current) {
           ctx2d.strokeStyle = '#4F46E5'
           ctx2d.lineWidth = 2
@@ -387,15 +385,20 @@ export default function MapCanvas(): JSX.Element {
         ctx2d.globalAlpha = 0.9
         ctx2d.beginPath(); ctx2d.arc(x, y, 14 + Math.sin(performance.now() / 600 + f.id) * 1.5, 0, Math.PI * 2); ctx2d.stroke()
         ctx2d.globalAlpha = 1
-        ctx2d.fillStyle = '#FFFFFF'
-        roundRect(ctx2d, x - 8, y - 8, 16, 16, 4)
-        ctx2d.fill()
-        ctx2d.lineWidth = 2
-        ctx2d.strokeStyle = '#B9B3A6'
-        ctx2d.stroke()
-        ctx2d.fillStyle = '#DC2626'
-        ctx2d.fillRect(x - 1.75, y - 5.25, 3.5, 10.5)
-        ctx2d.fillRect(x - 5.25, y - 1.75, 10.5, 3.5)
+        const hospImg = imgsRef.current.hosp
+        if (hospImg) {
+          ctx2d.drawImage(hospImg, x - 10, y - 10, 20, 20)
+        } else {
+          ctx2d.fillStyle = '#FFFFFF'
+          roundRect(ctx2d, x - 8, y - 8, 16, 16, 4)
+          ctx2d.fill()
+          ctx2d.lineWidth = 2
+          ctx2d.strokeStyle = '#B9B3A6'
+          ctx2d.stroke()
+          ctx2d.fillStyle = '#DC2626'
+          ctx2d.fillRect(x - 1.75, y - 5.25, 3.5, 10.5)
+          ctx2d.fillRect(x - 5.25, y - 1.75, 10.5, 3.5)
+        }
         if (lod >= 1) {
           ctx2d.fillStyle = '#1C1917'
           ctx2d.font = '600 10px Inter'
@@ -430,16 +433,21 @@ export default function MapCanvas(): JSX.Element {
         ctx2d.lineWidth = 2
         ctx2d.beginPath(); ctx2d.arc(x, y, 13, 0, Math.PI * 2); ctx2d.stroke()
         ctx2d.globalAlpha = 1
-        // white body + ink outline
-        ctx2d.fillStyle = '#FFFFFF'
-        roundRect(ctx2d, x - 9, y - 6, 18, 12, 3)
-        ctx2d.fill()
-        ctx2d.lineWidth = 1.5
-        ctx2d.strokeStyle = '#1C1917'
-        ctx2d.stroke()
-        // state stripe
-        ctx2d.fillStyle = stateColor
-        ctx2d.fillRect(x - 8, y - 1.5, 16, 3)
+        const ambImg = imgsRef.current.amb
+        if (ambImg) {
+          ctx2d.drawImage(ambImg, x - 12, y - 12, 24, 24)
+        } else {
+          // white body + ink outline
+          ctx2d.fillStyle = '#FFFFFF'
+          roundRect(ctx2d, x - 9, y - 6, 18, 12, 3)
+          ctx2d.fill()
+          ctx2d.lineWidth = 1.5
+          ctx2d.strokeStyle = '#1C1917'
+          ctx2d.stroke()
+          // state stripe
+          ctx2d.fillStyle = stateColor
+          ctx2d.fillRect(x - 8, y - 1.5, 16, 3)
+        }
         // flashing beacon while responding
         if (responding) {
           const flash = Math.floor(performance.now() / 220) % 2 === 0
@@ -467,13 +475,14 @@ export default function MapCanvas(): JSX.Element {
         }
       }
 
-      // ---- legend: urgency colors + entity key ----
+      // ---- legend: urgency colors + entity key (bottom-right, clear of the drills panel — D33) ----
+      const lgx = wpx - 246
       ctx2d.fillStyle = '#FFFFFF'
       ctx2d.strokeStyle = '#E7E4DD'
-      roundRect(ctx2d, 10, hpx - 60, 236, 50, 6)
+      roundRect(ctx2d, lgx, hpx - 60, 236, 50, 6)
       ctx2d.fill(); ctx2d.stroke()
       ctx2d.font = '10px Inter'
-      let lx = 18
+      let lx = lgx + 8
       for (const [uName, col] of Object.entries(URGENCY_COLOR)) {
         ctx2d.fillStyle = col
         ctx2d.beginPath(); ctx2d.arc(lx, hpx - 44, 3, 0, Math.PI * 2); ctx2d.fill()
@@ -482,7 +491,6 @@ export default function MapCanvas(): JSX.Element {
         lx += 45
       }
       const y2 = hpx - 19
-      lx = 18
       drawPerson(ctx2d, lx + 4, y2 - 2, 4.5, '#DC2626')
       ctx2d.fillStyle = '#78716C'; ctx2d.fillText('patient', lx + 12, y2 + 3)
       lx += 62

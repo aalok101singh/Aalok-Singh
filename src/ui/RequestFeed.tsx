@@ -19,8 +19,8 @@ export default function RequestFeed(): JSX.Element {
   const rank: Record<string, number> = { ECHO: 0, DELTA: 1, CHARLIE: 2, BRAVO: 3, ALPHA: 4 }
   const sorted = [...s.emgs].sort((a, b) =>
     (rank[a.urgency] - rank[b.urgency]) || (a.filedAtS - b.filedAtS))
-  const top50 = sorted.slice(0, 50).reverse() // newest visually on top within tier order
-  const overflow = sorted.length - top50.length
+  const top50 = sorted.slice(0, 50) // most severe first (D30)
+  const overflow = Math.max(0, (s.emgsTotal || s.emgs.length) - top50.length)
 
   return (
     <div className="flex flex-col gap-2 overflow-y-auto p-3">
@@ -73,7 +73,7 @@ export default function RequestFeed(): JSX.Element {
                 <span className="rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-white" style={{ background: URGENCY_COLOR[e.urgency] }}>{e.urgency}</span>
                 {e.bestEffort && <span title="SLA impossible" className="text-warn">⚠</span>}
                 <span className="ml-auto font-mono text-xs tnum text-muted">
-                  {breached ? `⚠ ${t('sla.breach')}` : `${Math.max(0, Math.floor((e.slaS - elapsed) / 60))}:${String(Math.max(0, 60 - (Math.floor(elapsed) % 60)))} to SLA`}
+                  {breached ? `⚠ ${t('sla.breach')}` : `${String(Math.max(0, Math.floor((e.slaS - elapsed) / 60))).padStart(2, '0')}:${String(Math.max(0, Math.floor(e.slaS - elapsed) % 60)).padStart(2, '0')} to target`}
                 </span>
               </div>
               <div className="mt-1 flex items-center gap-2 text-xs text-muted">

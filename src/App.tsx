@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import TopBar from './ui/TopBar'
 import DirectorBar from './ui/DirectorBar'
 import MapCanvas from './ui/MapCanvas'
@@ -16,8 +16,7 @@ import { t } from './i18n/t'
 type Tab = 'requests' | 'telemetry' | 'decisions' | 'benchmarks'
 
 function useSnapshot() {
-  const [, force] = useState(0)
-  useEffect(() => subscribe(() => force((n) => n + 1)), [])
+  useSyncExternalStore(subscribe, getSnapshot) // D44: tearing-safe, no full-tree counter re-render
   return getSnapshot()
 }
 
@@ -27,6 +26,7 @@ export default function App(): JSX.Element {
   const [reportOpen, setReportOpen] = useState(false)
   const [toast, setToast] = useState<{ id: number; text: string } | null>(null)
   const lastEventId = useRef(-1)
+  const lastScenarioEnd = useRef(-1)
   useEffect(() => {
     const last = s.events[s.events.length - 1]
     if (last && last.id !== lastEventId.current) {
@@ -46,14 +46,28 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     const onReport = (): void => setReportOpen(true)
+    const onReportToggle = (): void => setReportOpen((o) => !o)
+    const onDismiss = (): void => { setReportOpen(false); window.dispatchEvent(new CustomEvent('caregrid:shortcuts-dismiss')) }
     window.addEventListener('caregrid:report', onReport)
-    return () => window.removeEventListener('caregrid:report', onReport)
+    window.addEventListener('caregrid:report-toggle', onReportToggle)
+    window.addEventListener('caregrid:dismiss', onDismiss)
+    return () => {
+      window.removeEventListener('caregrid:report', onReport)
+      window.removeEventListener('caregrid:report-toggle', onReportToggle)
+      window.removeEventListener('caregrid:dismiss', onDismiss)
+    }
   }, [])
 
   // keyboard shortcuts (§10.2)
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT') return
+      const tag = (e.target as HTMLElement)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (e.key === ' ' && tag === 'BUTTON') (e.target as HTMLElement).blur() // Space toggles pause, never re-fires the button (D18)
+      if (e.key === 'Escape') {
+        window.dispatchEvent(new CustomEvent('caregrid:dismiss'))
+        return
+      }
       switch (e.key) {
         case ' ': e.preventDefault(); s.running ? actions.pause() : actions.start(); break
         case '1': actions.speed(1); break
@@ -64,7 +78,7 @@ export default function App(): JSX.Element {
         case 'm': case 'M': actions.mode(!getSnapshot().manual); break
         case 'f': case 'F': window.dispatchEvent(new CustomEvent('caregrid:follow')); break
         case 'w': case 'W': actions.wavefront(!getSnapshot().wavefrontOn); break
-        case 'r': case 'R': setReportOpen(true); break
+        case 'r': case 'R': window.dispatchEvent(new CustomEvent('caregrid:report-toggle')); break
         case '?': window.dispatchEvent(new CustomEvent('caregrid:shortcuts')); break
         case '+': case '=': window.dispatchEvent(new CustomEvent('caregrid:zoom', { detail: 1.2 })); break
         case '-': case '_': window.dispatchEvent(new CustomEvent('caregrid:zoom', { detail: 0.8 })); break
@@ -73,6 +87,15 @@ export default function App(): JSX.Element {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [s.running])
+
+  // scenario end → auto-open the report card (checklist item 15)
+  useEffect(() => {
+    const end = s.events.find((ev) => ev.text.startsWith('SCENARIO_END'))
+    if (end && end.id !== lastScenarioEnd.current) {
+      lastScenarioEnd.current = end.id
+      setReportOpen(true)
+    }
+  }, [s.events])
 
   return (
     <div className="flex h-full flex-col bg-bg">

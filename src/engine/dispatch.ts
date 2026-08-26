@@ -1,6 +1,6 @@
 // Dispatch pipeline §6.3: triage -> feasibility -> routing -> wait -> select -> assign -> trace.
 import { CONST } from './const'
-import { astar } from './pathfind'
+import { astar, dijkstra } from './pathfind'
 import type { GraphView } from './pathfind'
 import { facilityEligible } from './resources'
 import type { DecisionTrace, Emergency, Facility, FacilityEval, Specialty } from './types'
@@ -48,12 +48,16 @@ export function triageCompare(a: Emergency, b: Emergency, travelEst: (e: Emergen
 interface Pairing {
   ambId: number
   ambTravelS: number
-  facEval: FacilityEval
+  facEval: FacilityEval // per-pairing copy — never a shared mutable object (breadcrumb arithmetic)
 }
 
 /**
- * Pipeline steps 2–5 for one emergency: feasibility filter, A* routes per eligible facility,
+ * Pipeline steps 2–5 for one emergency: feasibility filter, routes per eligible facility,
  * wait estimate, argmin total = response + ON_SCENE + transport + wait.
+ *
+ * Performance contract (D5): facility legs are routed ONCE (≤6 A*), and all ambulance
+ * response legs come from ONE multi-source Dijkstra outward from the village —
+ * ≤7 searches per emergency regardless of fleet size.
  * Returns evals for ALL facilities (reject reasons included) plus best ambulance+facility pairing.
  */
 export function evaluate(
@@ -73,30 +77,38 @@ export function evaluate(
   const pairings = new Map<number, Pairing>()
   let best: Pairing | null = null
 
+  // step 3: ≤6 nearest ELIGIBLE facilities by haversine prefilter — routed once, independent of ambulance
+  const nearest = ctx.facilities
+    .filter((f) => evals[f.id].eligible)
+    .sort((a, b) => havM(ctx, villageNode, a.node) - havM(ctx, villageNode, b.node))
+    .slice(0, 6)
+  for (const f of nearest) {
+    const ev = evals[f.id]
+    const tr = astar(ctx.g, villageNode, f.node, pathOpts(ctx))
+    if (!tr.found) {
+      if (ev.reject === undefined) { ev.reject = 'UNREACHABLE'; ev.eligible = false }
+      continue
+    }
+    ev.travelS = Math.round(tr.dist)
+    ev.waitS = waitSeconds(f, inboundCount(f.id, missionRefs))
+    ev.totalS = CONST.ON_SCENE_S + ev.travelS + ev.waitS // facility-only component
+  }
+
+  // steps 1+5: one Dijkstra flood from the village gives every available ambulance's response leg
+  const flood = dijkstra(ctx.g, villageNode, null, pathOpts(ctx))
+  const respDist = flood.distArr
   for (const amb of ambs) {
     if (!amb.available) continue
-    const resp = astar(ctx.g, amb.at, villageNode, pathOpts(ctx))
-    if (!resp.found) continue
-    const responseS = Math.round(resp.dist)
-    // ≤6 nearest ELIGIBLE facilities by haversine prefilter (§6.3 step 3)
-    const nearest = ctx.facilities
-      .filter((f) => evals[f.id].eligible)
-      .sort((a, b) => havM(ctx, villageNode, a.node) - havM(ctx, villageNode, b.node))
-      .slice(0, 6)
+    const responseS = respDist ? Math.round(respDist[amb.at]) : Infinity
+    if (!isFinite(responseS)) continue // ambulance cannot reach the village
     for (const f of nearest) {
       const ev = evals[f.id]
-      if (!ev.eligible) continue
-      const tr = astar(ctx.g, villageNode, f.node, pathOpts(ctx))
-      if (!tr.found) {
-        if (ev.reject === undefined) { ev.reject = 'UNREACHABLE'; ev.eligible = false }
-        continue
-      }
-      ev.travelS = Math.round(tr.dist)
-      ev.waitS = waitSeconds(f, inboundCount(f.id, missionRefs))
-      ev.totalS = responseS + CONST.ON_SCENE_S + ev.travelS + ev.waitS
-      const pairing: Pairing = { ambId: amb.id, ambTravelS: responseS, facEval: ev }
+      if (!ev.eligible || !isFinite(ev.totalS)) continue
+      const totalS = responseS + ev.totalS
+      // per-pairing copy: a later ambulance must never corrupt this pairing's numbers
+      const pairing: Pairing = { ambId: amb.id, ambTravelS: responseS, facEval: { ...ev, totalS } }
       pairings.set(pairKey(amb.id, f.id), pairing)
-      if (!best || ev.totalS < best.facEval.totalS) best = pairing
+      if (!best || totalS < best.facEval.totalS) best = pairing
     }
   }
   return { evals, pairings, best }
@@ -131,11 +143,10 @@ export function batchAssign(
   const evalsByEmg = new Map<number, FacilityEval[]>()
   const perEmg: { emg: Emergency; options: { pairing: Pairing; key: number }[] }[] = []
   for (const emg of emgs.slice(0, CONST.BATCH_MAX)) {
-    const { evals, pairings, best } = evaluate(ctx, emg.village, emg.need, ambs, missionRefs)
+    const { evals, pairings } = evaluate(ctx, emg.village, emg.need, ambs, missionRefs)
     evalsByEmg.set(emg.id, evals)
     const options = [...pairings.entries()].map(([key, pairing]) => ({ pairing, key }))
     perEmg.push({ emg, options })
-    void best
   }
 
   // greedy: each patient independently takes its own cheapest option

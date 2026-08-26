@@ -2,6 +2,7 @@
 import { mulberry32 } from './rng'
 import { buildWorld } from './graph'
 import { haversineM } from './pathfind'
+import { CONST } from './const'
 import type { World } from './types'
 
 export type Preset = 'FULL' | 'MED' | 'DEMO'
@@ -106,6 +107,26 @@ export function proceduralWorld(seed: number, preset: Preset): World {
 
   bridgeComponents(n, lat, lng, edges, addEdge)
 
+  // arterial skeleton (D35/D36): long-range class-0/1 "highways" on a coarse lattice grid so the
+  // district view shows a readable road hierarchy and cross-district travel is not all 30 km/h
+  const idx = (r: number, c: number): number => r * cols + c
+  for (let r = 0; r < rows; r += 12) {
+    for (let c = 0; c < cols; c += 12) {
+      const a = idx(r, c)
+      if (a >= n) continue
+      if (c + 12 < cols) { const b = idx(r, c + 12); if (b < n) addEdge(a, b) }
+      if (r + 12 < rows) { const b = idx(r + 12, c); if (b < n) addEdge(a, b) }
+    }
+  }
+  for (let r = 0; r < rows; r += 24) {
+    for (let c = 0; c < cols; c += 24) {
+      const a = idx(r, c)
+      if (a >= n) continue
+      if (c + 24 < cols) { const b = idx(r, c + 24); if (b < n) addEdge(a, b) }
+      if (r + 24 < rows) { const b = idx(r + 24, c); if (b < n) addEdge(a, b) }
+    }
+  }
+
   // grid-based snapper: reuse the lattice buckets; expand rings, fall back to full scan
   const snapper = (pLa: number, pLo: number): number => {
     const cx = Math.floor(pLa / cellDeg), cy = Math.floor(pLo / cellDeg)
@@ -200,7 +221,7 @@ function finishWorld(
   const adjDst = new Uint32Array(M2), adjW = new Uint32Array(M2), adjLen = new Uint32Array(M2), adjCls = new Uint8Array(M2)
   const cursorFill = Uint32Array.from(adjOff)
   for (const e of edges) {
-    const wgt = Math.round(e.lenM / (CONST_SPEED[e.cls] * 1000 / 3600))
+    const wgt = Math.round(e.lenM / (CONST.SPEED_KMH[e.cls] * 1000 / 3600))
     const lenM = Math.round(e.lenM)
     let slot = cursorFill[e.a]++
     adjDst[slot] = e.b; adjW[slot] = wgt; adjLen[slot] = lenM; adjCls[slot] = e.cls
@@ -242,14 +263,14 @@ function finishWorld(
       meds: mkMeds(tier), doctors: mkDoctors(specs),
     })
   }
-  for (let j = 0; j < facCounts.DH; j++) pushFac(`DH ${j + 1}`, 'DH', ['CARDIOLOGY', 'GENERAL', 'OBSTETRIC', 'PEDIATRIC', 'SURGERY', 'TRAUMA'], 40)
+  for (let j = 0; j < facCounts.DH; j++) pushFac(`Main Hospital ${j + 1}`, 'DH', ['CARDIOLOGY', 'GENERAL', 'OBSTETRIC', 'PEDIATRIC', 'SURGERY', 'TRAUMA'], 40)
   for (let j = 0; j < facCounts.CHC; j++) {
     const specs = ['GENERAL', 'OBSTETRIC', 'PEDIATRIC']
     if (rng() < 0.5) specs.push(EXTRA_SPECS[(rng() * EXTRA_SPECS.length) | 0])
-    pushFac(`CHC ${j + 1}`, 'CHC', [...new Set(specs)], 20)
+    pushFac(`Health Centre ${j + 1}`, 'CHC', [...new Set(specs)], 20)
   }
-  for (let j = 0; j < facCounts.PHC; j++) pushFac(`PHC ${j + 1}`, 'PHC', ['GENERAL'], 8)
-  for (let j = 0; j < facCounts.HSC; j++) pushFac(`HSC ${String(j + 1).padStart(2, '0')}`, 'HSC', [], 0)
+  for (let j = 0; j < facCounts.PHC; j++) pushFac(`Clinic ${j + 1}`, 'PHC', ['GENERAL'], 8)
+  for (let j = 0; j < facCounts.HSC; j++) pushFac(`Health Post ${String(j + 1).padStart(2, '0')}`, 'HSC', [], 0)
 
   const villageCount = PRESET_VILLAGES[preset] // v1.1: 5,200 / 1,500 / 300 — organizer floors
   const villages: World['villages'] = []
@@ -265,8 +286,8 @@ function finishWorld(
   const ambulances: World['ambulances'] = []
   const hostsDHCHC = facilities.filter((f) => f.tier === 'DH' || f.tier === 'CHC')
   const hostsOther = facilities.filter((f) => f.tier === 'PHC' || f.tier === 'HSC')
-  const alsCount = Math.max(1, Math.round(CONST_FLEET.ALS * cubeRoot))
-  const blsCount = Math.max(2, Math.round(CONST_FLEET.BLS * cubeRoot))
+  const alsCount = Math.max(1, Math.round(CONST.FLEET.ALS * cubeRoot))
+  const blsCount = Math.max(2, Math.round(CONST.FLEET.BLS * cubeRoot))
   for (let j = 0; j < alsCount; j++) {
     ambulances.push({ id: ambulances.length, callsign: `ALS-${j + 1}`, cls: 'ALS', state: 'AVAILABLE', at: hostsDHCHC[j % hostsDHCHC.length].node, missionId: -1, edgeProgress: 0 })
   }
@@ -281,8 +302,7 @@ function finishWorld(
   }
 }
 
-const CONST_SPEED = [60, 40, 25]
-const CONST_FLEET = { ALS: 8, BLS: 16 }
+// speeds/fleet come from CONST (single source of constants — D42)
 function kNeighborsOf(preset: Preset): number { return PRESET_NEIGHBORS[preset] }
 
 
