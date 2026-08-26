@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --border: #E7E4DD;
+  --ink: #1C1917;
+  --muted: #78716C;
+  --primary: #4F46E5;
+  --primary-soft: #EEF2FF;
+  --ok: #059669;
+  --ok-soft: #ECFDF5;
+  --warn: #D97706;
+  --warn-soft: #FFFBEB;
+  --danger: #DC2626;
+  --danger-soft: #FEF2F2;
+
+  --urgency-ECHO: #DC2626;
+  --urgency-DELTA: #EA580C;
+  --urgency-CHARLIE: #D97706;
+  --urgency-BRAVO: #0284C7;
+  --urgency-ALPHA: #64748B;
+
+  --map-land: #F5F4EF;
+  --map-road0: #B8B4AA;
+  --map-road1: #D6D3CC;
+  --map-closed: #DC2626;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Inter, sans-serif;
+  overflow: hidden;
+}
+
+.tnum { font-variant-numeric: tabular-nums; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
