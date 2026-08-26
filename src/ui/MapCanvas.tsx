@@ -11,10 +11,11 @@ interface View { cx: number; cy: number; scale: number } // center in world px; 
 
 export default function MapCanvas(): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const viewRef = useRef<View>({ cx: 76.675, cy: 25.05, scale: 8 })
+  const viewRef = useRef<View>({ cx: 76.675, cy: 25.05, scale: 0.01 })
+  const fittedRef = useRef(false)
   const followRef = useRef(false)
   const wavefrontRef = useRef<{ settled: Uint32Array; frontier: Uint32Array } | null>(null)
-  const [zoomLabel, setZoomLabel] = useState(8)
+  const [zoomLabel, setZoomLabel] = useState(0.01)
   const [expandedN, setExpandedN] = useState(0)
 
   useEffect(() => {
@@ -61,24 +62,31 @@ export default function MapCanvas(): JSX.Element {
       const loBefore = v.cx + (mx - rect.width / 2) / (v.scale * 102000)
       const laBefore = v.cy - (my - rect.height / 2) / (v.scale * 111320)
       const f = e.deltaY < 0 ? 1.15 : 1 / 1.15
-      v.scale = Math.min(40000, Math.max(4, v.scale * f))
+      v.scale = Math.min(400, Math.max(0.004, v.scale * f))
       // world coords under cursor after zoom; shift center to keep cursor anchored
       const loAfter = v.cx + (mx - rect.width / 2) / (v.scale * 102000)
       const laAfter = v.cy - (my - rect.height / 2) / (v.scale * 111320)
       v.cx += loBefore - loAfter
       v.cy += laBefore - laAfter
-      setZoomLabel(Math.round(v.scale))
+      setZoomLabel(v.scale)
     }
     const onDbl = (): void => {
       const v = viewRef.current
-      v.scale = Math.min(40000, v.scale * 1.8)
-      setZoomLabel(Math.round(v.scale))
+      v.scale = Math.min(400, v.scale * 1.8)
+      setZoomLabel(v.scale)
+    }
+    const onZoomKey = (ev: Event): void => {
+      const v = viewRef.current
+      const f = (ev as CustomEvent<number>).detail ?? 1.2
+      v.scale = Math.min(400, Math.max(0.004, v.scale * f))
+      setZoomLabel(v.scale)
     }
     canvas.addEventListener('pointerdown', onDown)
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('dblclick', onDbl)
+    window.addEventListener('caregrid:zoom', onZoomKey)
 
     const toScreen = (v: View, la: number, lo: number, wpx: number, hpx: number): [number, number] => {
       const x = (lo - v.cx) * v.scale * 102000 + wpx / 2
@@ -95,6 +103,17 @@ export default function MapCanvas(): JSX.Element {
       ctx2d.fillRect(0, 0, wpx, hpx)
       if (!geo) return
       const v = viewRef.current
+
+      // first-geometry fit: center + scale the district bbox into view (once)
+      if (!fittedRef.current) {
+        fittedRef.current = true
+        const [la0, lo0, la1, lo1] = geo.bbox
+        v.cx = (lo0 + lo1) / 2
+        v.cy = (la0 + la1) / 2
+        const fit = Math.min(wpx / Math.max(1, (lo1 - lo0) * 102000), hpx / Math.max(1, (la1 - la0) * 111320))
+        v.scale = Math.max(0.004, fit * 0.95)
+        setZoomLabel(v.scale)
+      }
 
       // district bbox outline
       const [bx0, by0] = toScreen(v, geo.bbox[0], geo.bbox[1], wpx, hpx)
@@ -299,6 +318,7 @@ export default function MapCanvas(): JSX.Element {
       window.removeEventListener('pointerup', onUp)
       canvas.removeEventListener('wheel', onWheel)
       canvas.removeEventListener('dblclick', onDbl)
+      window.removeEventListener('caregrid:zoom', onZoomKey)
     }
   }, [])
 
@@ -309,7 +329,9 @@ export default function MapCanvas(): JSX.Element {
       <canvas ref={canvasRef} className="h-full w-full cursor-grab active:cursor-grabbing" aria-label="district map" />
       <div className="absolute right-3 top-3 flex flex-col items-end gap-2">
         <button className="rounded-control border border-border bg-surface px-2 py-1 text-xs shadow-card" onClick={toggleFollow}>follow-cam</button>
-        <div className="rounded-control border border-border bg-surface px-2 py-1 font-mono text-xs tnum shadow-card">zoom ×{zoomLabel}</div>
+        <div className="rounded-control border border-border bg-surface px-2 py-1 font-mono text-xs tnum shadow-card">
+          zoom ×{zoomLabel < 1 ? zoomLabel.toFixed(2) : Math.round(zoomLabel)}
+        </div>
         {getSnapshot().wavefrontOn && (
           <div className="rounded-control border border-primary bg-primary-soft px-2 py-1 font-mono text-xs text-primary tnum">expanded: {expandedN}</div>
         )}

@@ -10,7 +10,7 @@ CareGrid answers one question per emergency: **which ambulance should go, to whi
 
 ## Live demo
 
-**https://caregrid-two.vercel.app**
+**https://caregrid.vercel.app**
 
 Reproducible runs: append `?seed=42&scenario=mock` — world generation, traffic, and the Official Mock scenario are fully deterministic from the seed.
 
