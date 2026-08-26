@@ -32,6 +32,13 @@ export default function ChaosPanel(): JSX.Element {
           </button>
         ))}
         <button
+          className={`rounded-control border px-2 py-1 text-[10px] font-medium ${s.ambientOn ? 'border-primary bg-primary-soft text-primary' : 'border-border'}`}
+          onClick={() => actions.ambient(!s.ambientOn)}
+          title="Background Poisson emergencies — turn off to test a single injection in isolation"
+        >
+          background arrivals: {s.ambientOn ? 'on' : 'off'}
+        </button>
+        <button
           className="w-full rounded-control border border-primary px-2 py-1 text-[10px] font-semibold text-primary hover:bg-primary-soft"
           onClick={() => actions.chaos('RESET_SCENARIO')}
         >

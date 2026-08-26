@@ -64,6 +64,7 @@ export type ToWorker =
   | { type: 'CHAOS', action: ChaosAction }
   | { type: 'MODE', manual: boolean }
   | { type: 'BATCH_OPTIMAL', on: boolean }
+  | { type: 'AMBIENT', on: boolean }
   | { type: 'WAVEFRONT_MODE', on: boolean }
   | { type: 'RECOMMEND', emgId: number }
   | { type: 'CONFIRM', emgId: number }

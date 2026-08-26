@@ -58,6 +58,7 @@ export class SimEngine {
   manual = false
   wavefront = false
   batchOptimal = true
+  ambientArrivals = true
   influxUntilS = -1
 
   private rng: Rng
@@ -115,8 +116,8 @@ export class SimEngine {
     this.clockS += CONST.TICK_S
     const t = this.clockS
 
-    // arrivals (Poisson §8)
-    if (t >= this.nextArrivalS && this.emergencesUnderCap()) {
+    // arrivals (Poisson §8) — ambient background; disable to test single injections
+    if (this.ambientArrivals && t >= this.nextArrivalS && this.emergencesUnderCap()) {
       this.spawnRandomEmergency()
       const mean = t < this.influxUntilS ? CONST.ARRIVALS_MEAN_S / CONST.INFLUX_MULT : CONST.ARRIVALS_MEAN_S
       this.nextArrivalS = t + Math.max(5, expSeconds(this.rng, mean))

@@ -171,15 +171,18 @@ export default function MapCanvas(): JSX.Element {
         ctx2d.globalAlpha = 1
         return ticks
       }
-      drawBucket(0)
-      drawBucket(1)
-      drawBucket(2)
-      const closedTicks = hasClosures ? drawBucket(3) : []
-      for (let i = 0; i < closedTicks.length; i += 2) {
-        const mx = closedTicks[i], my = closedTicks[i + 1]
-        ctx2d.beginPath()
-        ctx2d.moveTo(mx - 3, my - 3); ctx2d.lineTo(mx + 3, my + 3)
-        ctx2d.stroke()
+      // roads only when zoomed in enough to be meaningful (below this, dots carry the view)
+      if (zoom >= 0.04) {
+        drawBucket(0)
+        drawBucket(1)
+        drawBucket(2)
+        const closedTicks = hasClosures ? drawBucket(3) : []
+        for (let i = 0; i < closedTicks.length; i += 2) {
+          const mx = closedTicks[i], my = closedTicks[i + 1]
+          ctx2d.beginPath()
+          ctx2d.moveTo(mx - 3, my - 3); ctx2d.lineTo(mx + 3, my + 3)
+          ctx2d.stroke()
+        }
       }
 
       // ---- wavefront overlay ----
@@ -199,25 +202,29 @@ export default function MapCanvas(): JSX.Element {
         }
       }
 
-      // ---- active mission routes (animated dash) ----
+      // ---- active mission routes (white underlay + animated indigo dash) ----
       dashOffset = (dashOffset - 0.6) % 16
-      ctx2d.lineWidth = 3
-      ctx2d.setLineDash([10, 6])
-      ctx2d.lineDashOffset = dashOffset
-      ctx2d.strokeStyle = '#4F46E5'
-      for (const a of snap.ambs) {
-        if (a.state !== 'TO_SCENE' && a.state !== 'TO_FACILITY') continue
-        const [x0, y0] = toScreen(v, geo.lat[a.from], geo.lng[a.from], wpx, hpx)
-        const [x1, y1] = toScreen(v, geo.lat[a.to], geo.lng[a.to], wpx, hpx)
-        ctx2d.beginPath()
-        ctx2d.moveTo(x0, y0)
-        ctx2d.lineTo(x1, y1)
-        ctx2d.stroke()
+      const drawRoutes = (width: number, color: string, dash: number[]): void => {
+        ctx2d.lineWidth = width
+        ctx2d.strokeStyle = color
+        ctx2d.setLineDash(dash)
+        ctx2d.lineDashOffset = dashOffset
+        for (const a of snap.ambs) {
+          if (a.state !== 'TO_SCENE' && a.state !== 'TO_FACILITY') continue
+          const [x0, y0] = toScreen(v, geo.lat[a.from], geo.lng[a.from], wpx, hpx)
+          const [x1, y1] = toScreen(v, geo.lat[a.to], geo.lng[a.to], wpx, hpx)
+          ctx2d.beginPath()
+          ctx2d.moveTo(x0, y0)
+          ctx2d.lineTo(x1, y1)
+          ctx2d.stroke()
+        }
+        ctx2d.setLineDash([])
       }
-      ctx2d.setLineDash([])
+      drawRoutes(6, 'rgba(255,255,255,0.85)', [])
+      drawRoutes(3.5, '#4F46E5', [10, 6])
 
-      // ---- emergency scene rings (pulsing, urgency color + shape; §10.2 v1.1: capped to 200 nearest viewport) ----
-      const pulse = 4 + 2.5 * Math.sin(performance.now() / 180)
+      // ---- emergency scenes: pulsing urgency ring + white patient disc + glyph ----
+      const pulse = 12 + 3 * Math.sin(performance.now() / 180)
       const ringCandidates = snap.emgs
         .filter((emg) => emg.status !== 'DELIVERED' && emg.status !== 'UNREACHABLE')
         .sort((a, b) => {
@@ -228,36 +235,53 @@ export default function MapCanvas(): JSX.Element {
         .slice(0, 200)
       for (const emg of ringCandidates) {
         const [x, y] = toScreen(v, geo.lat[emg.villageNode], geo.lng[emg.villageNode], wpx, hpx)
-        ctx2d.strokeStyle = URGENCY_COLOR[emg.urgency] ?? '#DC2626'
-        ctx2d.lineWidth = 2
+        const col = URGENCY_COLOR[emg.urgency] ?? '#DC2626'
+        ctx2d.strokeStyle = col
+        ctx2d.lineWidth = 2.5
+        ctx2d.globalAlpha = 0.8
         ctx2d.beginPath()
-        ctx2d.arc(x, y, pulse + 4, 0, Math.PI * 2)
+        ctx2d.arc(x, y, pulse + 8, 0, Math.PI * 2)
         ctx2d.stroke()
-        drawGlyph(ctx2d, emg.urgency, x, y, 4)
+        ctx2d.globalAlpha = 1
+        ctx2d.fillStyle = '#FFFFFF'
+        ctx2d.beginPath(); ctx2d.arc(x, y, 9, 0, Math.PI * 2); ctx2d.fill()
+        ctx2d.lineWidth = 2.5
+        ctx2d.stroke()
+        drawGlyph(ctx2d, emg.urgency, x, y, 5)
       }
 
-      // ---- facilities: badges + capacity rings ----
+      // ---- facilities: white shield + tier cross + breathing capacity ring ----
       for (const f of geo.facilities) {
         const [x, y] = toScreen(v, geo.lat[f.node], geo.lng[f.node], wpx, hpx)
         const fd = snap.facilities.find((ff) => ff.id === f.id)
         const bedsPct = fd && fd.bedsTotal > 0 ? fd.bedsFree / fd.bedsTotal : 1
         const ringColor = bedsPct > 0.5 ? '#059669' : bedsPct > 0.2 ? '#D97706' : '#DC2626'
+        const tc = tierColor(f.tier)
         ctx2d.strokeStyle = ringColor
-        ctx2d.lineWidth = 1.5
-        ctx2d.beginPath(); ctx2d.arc(x, y, 7 + Math.sin(performance.now() / 600 + f.id) * 1.2, 0, Math.PI * 2); ctx2d.stroke()
-        ctx2d.fillStyle = tierColor(f.tier)
-        ctx2d.fillRect(x - 3, y - 3, 6, 6)
+        ctx2d.lineWidth = 2
+        ctx2d.globalAlpha = 0.9
+        ctx2d.beginPath(); ctx2d.arc(x, y, 12 + Math.sin(performance.now() / 600 + f.id) * 1.5, 0, Math.PI * 2); ctx2d.stroke()
+        ctx2d.globalAlpha = 1
+        ctx2d.fillStyle = '#FFFFFF'
+        roundRect(ctx2d, x - 7, y - 7, 14, 14, 3)
+        ctx2d.fill()
+        ctx2d.lineWidth = 2
+        ctx2d.strokeStyle = tc
+        ctx2d.stroke()
+        ctx2d.fillStyle = tc
+        ctx2d.fillRect(x - 1.5, y - 4.5, 3, 9)
+        ctx2d.fillRect(x - 4.5, y - 1.5, 9, 3)
         if (lod >= 1) {
           ctx2d.fillStyle = '#1C1917'
-          ctx2d.font = '10px Inter'
-          ctx2d.fillText(f.name, x + 9, y + 3)
+          ctx2d.font = '600 10px Inter'
+          ctx2d.fillText(f.name, x + 11, y + 3)
         }
       }
 
       // ---- villages ----
       for (const vil of geo.villages) {
         const [x, y] = toScreen(v, geo.lat[vil.node], geo.lng[vil.node], wpx, hpx)
-        ctx2d.fillStyle = '#78716C'
+        ctx2d.fillStyle = lod === 0 ? 'rgba(120,113,108,0.45)' : '#78716C'
         ctx2d.beginPath()
         ctx2d.arc(x, y, Math.max(1.2, Math.min(4, Math.sqrt(vil.pop) / 22)), 0, Math.PI * 2)
         ctx2d.fill()
@@ -268,7 +292,7 @@ export default function MapCanvas(): JSX.Element {
         }
       }
 
-      // ---- ambulance glyphs ----
+      // ---- ambulance glyphs: white body, ink outline, state stripe, heading arrow ----
       for (const a of snap.ambs) {
         const la = geo.lat[a.from] + (geo.lat[a.to] - geo.lat[a.from]) * a.t01
         const lo = geo.lng[a.from] + (geo.lng[a.to] - geo.lng[a.from]) * a.t01
@@ -276,46 +300,72 @@ export default function MapCanvas(): JSX.Element {
         const stateColor = a.state === 'AVAILABLE' ? '#059669' : a.state === 'ON_SCENE' || a.state === 'HANDOVER' ? '#D97706' : '#4F46E5'
         // status halo
         ctx2d.strokeStyle = stateColor
-        ctx2d.globalAlpha = 0.35
-        ctx2d.beginPath(); ctx2d.arc(x, y, 8, 0, Math.PI * 2); ctx2d.stroke()
+        ctx2d.globalAlpha = 0.4
+        ctx2d.lineWidth = 2
+        ctx2d.beginPath(); ctx2d.arc(x, y, 12, 0, Math.PI * 2); ctx2d.stroke()
         ctx2d.globalAlpha = 1
-        // rounded rect body
-        ctx2d.fillStyle = a.cls === 'ALS' ? '#1C1917' : '#44403C'
-        roundRect(ctx2d, x - 5, y - 3.5, 10, 7, 2)
+        // white body + ink outline
+        ctx2d.fillStyle = '#FFFFFF'
+        roundRect(ctx2d, x - 8, y - 5.5, 16, 11, 3)
         ctx2d.fill()
+        ctx2d.lineWidth = 1.5
+        ctx2d.strokeStyle = '#1C1917'
+        ctx2d.stroke()
+        // state stripe
+        ctx2d.fillStyle = stateColor
+        ctx2d.fillRect(x - 7, y - 1.5, 14, 3)
         // heading arrow: screen-space direction from→to
         const [fx, fy] = toScreen(v, geo.lat[a.from], geo.lng[a.from], wpx, hpx)
         const [tx, ty] = toScreen(v, geo.lat[a.to], geo.lng[a.to], wpx, hpx)
         let dx = tx - fx, dy = ty - fy
         const len = Math.hypot(dx, dy) || 1
         dx /= len; dy /= len
-        ctx2d.fillStyle = stateColor
-        ctx2d.beginPath()
-        ctx2d.moveTo(x + dx * 8, y + dy * 8)
-        ctx2d.lineTo(x + dx * 3 - dy * 2.5, y + dy * 3 + dx * 2.5)
-        ctx2d.lineTo(x + dx * 3 + dy * 2.5, y + dy * 3 - dx * 2.5)
-        ctx2d.fill()
+        if (a.state === 'TO_SCENE' || a.state === 'TO_FACILITY') {
+          ctx2d.fillStyle = stateColor
+          ctx2d.beginPath()
+          ctx2d.moveTo(x + dx * 13, y + dy * 13)
+          ctx2d.lineTo(x + dx * 6 - dy * 4, y + dy * 6 + dx * 4)
+          ctx2d.lineTo(x + dx * 6 + dy * 4, y + dy * 6 - dx * 4)
+          ctx2d.fill()
+        }
         if (lod >= 2) {
           ctx2d.fillStyle = '#1C1917'
           ctx2d.font = '600 9px "JetBrains Mono"'
-          ctx2d.fillText(a.callsign, x + 8, y - 6)
+          ctx2d.fillText(a.callsign, x + 10, y - 8)
         }
       }
 
-      // legend chip
+      // ---- legend: urgency colors + entity key ----
       ctx2d.fillStyle = '#FFFFFF'
       ctx2d.strokeStyle = '#E7E4DD'
-      roundRect(ctx2d, 10, hpx - 34, 210, 24, 6)
+      roundRect(ctx2d, 10, hpx - 60, 224, 50, 6)
       ctx2d.fill(); ctx2d.stroke()
       ctx2d.font = '10px Inter'
       let lx = 18
       for (const [uName, col] of Object.entries(URGENCY_COLOR)) {
         ctx2d.fillStyle = col
-        ctx2d.beginPath(); ctx2d.arc(lx, hpx - 22, 3, 0, Math.PI * 2); ctx2d.fill()
+        ctx2d.beginPath(); ctx2d.arc(lx, hpx - 44, 3, 0, Math.PI * 2); ctx2d.fill()
         ctx2d.fillStyle = '#78716C'
-        ctx2d.fillText(uName, lx + 5, hpx - 19)
+        ctx2d.fillText(uName, lx + 5, hpx - 41)
         lx += 42
       }
+      // row 2: entity key
+      const y2 = hpx - 20
+      lx = 18
+      ctx2d.fillStyle = '#DC2626'
+      ctx2d.beginPath(); ctx2d.moveTo(lx + 4, y2 - 5); ctx2d.lineTo(lx + 8, y2 + 2); ctx2d.lineTo(lx, y2 + 2); ctx2d.closePath(); ctx2d.fill()
+      ctx2d.fillStyle = '#78716C'; ctx2d.fillText('patient', lx + 12, y2 + 3)
+      lx += 58
+      ctx2d.fillStyle = '#FFFFFF'; roundRect(ctx2d, lx, y2 - 5, 14, 9, 2); ctx2d.fill()
+      ctx2d.strokeStyle = '#1C1917'; ctx2d.lineWidth = 1; ctx2d.stroke()
+      ctx2d.fillStyle = '#059669'; ctx2d.fillRect(lx + 2, y2 - 2, 10, 3)
+      ctx2d.fillStyle = '#78716C'; ctx2d.fillText('ambulance', lx + 18, y2 + 3)
+      lx += 82
+      ctx2d.fillStyle = '#FFFFFF'; roundRect(ctx2d, lx, y2 - 6, 12, 12, 2); ctx2d.fill()
+      ctx2d.strokeStyle = '#D97706'; ctx2d.lineWidth = 1.5; ctx2d.stroke()
+      ctx2d.fillStyle = '#D97706'
+      ctx2d.fillRect(lx + 5, y2 - 3.5, 2, 7); ctx2d.fillRect(lx + 2.5, y2 - 1, 7, 2)
+      ctx2d.fillStyle = '#78716C'; ctx2d.fillText('hospital', lx + 16, y2 + 3)
     }
     raf = requestAnimationFrame(loop)
 

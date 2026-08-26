@@ -191,6 +191,9 @@ self.onmessage = async (ev: MessageEvent<ToWorker>): Promise<void> => {
     case 'BATCH_OPTIMAL':
       if (sim) sim.batchOptimal = msg.on
       break
+    case 'AMBIENT':
+      if (sim) sim.ambientArrivals = msg.on
+      break
     case 'WAVEFRONT_MODE':
       if (sim) sim.wavefront = msg.on // engine streams frontier samples on pathfind (§10.3, wired in B4)
       break

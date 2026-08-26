@@ -25,6 +25,7 @@ export interface Snapshot {
   ariaAnnounce: string
   scenario: string
   batchOptimalOn: boolean
+  ambientOn: boolean
 }
 
 const initial: Snapshot = {
@@ -32,7 +33,7 @@ const initial: Snapshot = {
   running: false, speedMult: 1, manual: false,
   ambs: [], emgs: [], facDeltas: [], events: [], traces: [],
   kpis: null, closedEdges: [], recommendation: null, bench: null,
-  wavefrontOn: false, ariaAnnounce: '', scenario: 'Free run', batchOptimalOn: true,
+  wavefrontOn: false, ariaAnnounce: '', scenario: 'Free run', batchOptimalOn: true, ambientOn: true,
 }
 
 let snap: Snapshot = initial
@@ -113,6 +114,7 @@ export const actions = {
   chaos: (action: string): void => send({ type: 'CHAOS', action }),
   mode: (manual: boolean): void => send({ type: 'MODE', manual }),
   batchOptimal: (on: boolean): void => { set({ batchOptimalOn: on }); send({ type: 'BATCH_OPTIMAL', on }) },
+  ambient: (on: boolean): void => { set({ ambientOn: on }); send({ type: 'AMBIENT', on }) },
   wavefront: (on: boolean): void => { set({ wavefrontOn: on }); send({ type: 'WAVEFRONT_MODE', on }) },
   recommend: (emgId: number): void => send({ type: 'RECOMMEND', emgId }),
   confirm: (emgId: number): void => send({ type: 'CONFIRM', emgId }),
