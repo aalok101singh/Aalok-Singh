@@ -188,10 +188,17 @@ export default function MapCanvas(): JSX.Element {
       }
       ctx2d.setLineDash([])
 
-      // ---- emergency scene rings (pulsing, urgency color + shape) ----
+      // ---- emergency scene rings (pulsing, urgency color + shape; §10.2 v1.1: capped to 200 nearest viewport) ----
       const pulse = 4 + 2.5 * Math.sin(performance.now() / 180)
-      for (const emg of snap.emgs) {
-        if (emg.status === 'DELIVERED' || emg.status === 'UNREACHABLE') continue
+      const ringCandidates = snap.emgs
+        .filter((emg) => emg.status !== 'DELIVERED' && emg.status !== 'UNREACHABLE')
+        .sort((a, b) => {
+          const da = Math.hypot(geo.lat[a.villageNode] - v.cy, geo.lng[a.villageNode] - v.cx)
+          const db = Math.hypot(geo.lat[b.villageNode] - v.cy, geo.lng[b.villageNode] - v.cx)
+          return da - db
+        })
+        .slice(0, 200)
+      for (const emg of ringCandidates) {
         const [x, y] = toScreen(v, geo.lat[emg.villageNode], geo.lng[emg.villageNode], wpx, hpx)
         ctx2d.strokeStyle = URGENCY_COLOR[emg.urgency] ?? '#DC2626'
         ctx2d.lineWidth = 2

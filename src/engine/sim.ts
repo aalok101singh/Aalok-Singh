@@ -235,6 +235,32 @@ export class SimEngine {
   }
 
   // ---- dispatch pipeline ----
+  /** §6.2.9 dynamic resource re-allocation. Returns true if a unit was freed. */
+  private preemptForEcho(): boolean {
+    let cand: MissionRuntime | null = null
+    for (const mr of this.missions.values()) {
+      if (mr.leg !== 'TO_SCENE') continue // never ON_SCENE / TO_FACILITY / HANDOVER — patient aboard
+      const emg = this.emergencies.get(mr.m.emg)
+      if (!emg || emg.urgency === 'ECHO') continue
+      if (!cand || mr.m.id > cand.m.id) cand = mr // most recently dispatched
+    }
+    if (!cand) return false
+    const amb = this.world.ambulances[cand.m.amb]
+    const oldEmg = this.emergencies.get(cand.m.emg)
+    if (oldEmg) {
+      // release reserved bed; med dose is dispensed on arrival only → nothing to refund
+      const fac = this.world.facilities[cand.m.facility]
+      fac.bedsFree = Math.min(fac.bedsTotal, fac.bedsFree + 1)
+      oldEmg.status = 'QUEUED' // filedAt unchanged → triage sorts it front-of-tier
+      oldEmg.missionId = -1
+      this.push('ALERT', `PREEMPTED · ${nameOf(this.world, oldEmg.village)} re-queued front-of-tier (unit re-allocated to ECHO)`, oldEmg.id)
+    }
+    this.missions.delete(cand.m.id)
+    amb.state = 'AVAILABLE'
+    amb.at = this.currentNodeOf(cand) // re-allocation from current edge position
+    return true
+  }
+
   private availableAmbulances(): AmbView[] {
     return this.world.ambulances.filter((a) => a.state === 'AVAILABLE').map((a) => ({ id: a.id, at: a.at, available: true }))
   }
@@ -255,11 +281,16 @@ export class SimEngine {
   }
 
   private dispatchBatch(queued: RuntimeEmergency[]): void {
+    let ambs = this.availableAmbulances()
+    // §6.2.9 ECHO preemption: zero AVAILABLE + an ECHO waiting → re-allocate the newest
+    // non-ECHO TO_SCENE mission (patient not aboard); preempted patient re-queues front-of-tier.
+    if (ambs.length === 0 && queued.some((e) => e.urgency === 'ECHO')) {
+      if (this.preemptForEcho()) ambs = this.availableAmbulances()
+    }
     const ctx = {
       g: this.g, facilities: this.world.facilities, closedEdges: this.closedEdges, clockS: this.clockS,
       onPathfind: this.wavefront && this.onWavefront ? this.onWavefront : undefined,
     }
-    const ambs = this.availableAmbulances()
     const refs = this.phaseRefs()
     if (ambs.length === 0) {
       if (!this.degradedBannerShown) {
@@ -524,6 +555,13 @@ export class SimEngine {
         const v = pickVillage()
         for (let i = 0; i < 3; i++) this.createEmergency(v, 'BRAVO', 'GENERAL', 'FAMILY')
         return 'duplicate storm ×3 (dedupe window)'
+      }
+      case 'STRESS_SURGE_1000': {
+        // §13.2 #14: 1,000 emergencies over 60s — organizer "thousands of concurrent influxes" floor
+        for (let i = 0; i < 1000; i++) {
+          setTimeoutSim(this, Math.floor(i / 17), () => { this.spawnRandomEmergency() })
+        }
+        return 'stress surge ×1000 over 60s'
       }
       default: return 'unknown action'
     }

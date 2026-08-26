@@ -52,20 +52,40 @@ export async function fetchWeather(clockS: number, seed: number, forceSynthetic 
   const zones = seededZones(mulberry32(seed))
   let state: WeatherState
   if (!forceSynthetic) {
-    try {
-      const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=25.05&longitude=76.675&current=precipitation')
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const j = (await res.json()) as { current?: { precipitation?: number } }
-      const mm = j.current?.precipitation ?? 0
-      state = { precipMm: mm, mult: precipToMult(mm), zones, source: 'open-meteo', fetchedAtS: clockS }
-    } catch {
+    // D6 v1.1 chain: /api/weather (serverless, 15-min cache) → direct Open-Meteo → synthetic driver
+    const mm = await fetchPrecipChain()
+    if (mm === null) {
       state = syntheticWeather(clockS, seed, zones)
+    } else {
+      state = { precipMm: mm, mult: precipToMult(mm), zones, source: 'open-meteo', fetchedAtS: clockS }
     }
   } else {
     state = syntheticWeather(clockS, seed, zones)
   }
   cache = state
   return state
+}
+
+async function fetchPrecipChain(): Promise<number | null> {
+  // 1) our serverless proxy
+  try {
+    const ac = new AbortController()
+    setTimeout(() => ac.abort(), 2500)
+    const r = await fetch('/api/weather', { signal: ac.signal })
+    if (r.ok) {
+      const j = (await r.json()) as { precipMm?: number }
+      return j.precipMm ?? 0
+    }
+  } catch { /* fall through */ }
+  // 2) direct Open-Meteo
+  try {
+    const r = await fetch('https://api.open-meteo.com/v1/forecast?latitude=25.05&longitude=76.675&current=precipitation')
+    if (r.ok) {
+      const j = (await r.json()) as { current?: { precipitation?: number } }
+      return j.current?.precipitation ?? 0
+    }
+  } catch { /* fall through */ }
+  return null // 3) synthetic driver takes over silently
 }
 
 export function syntheticWeather(clockS: number, seed: number, zones?: WeatherState['zones']): WeatherState {

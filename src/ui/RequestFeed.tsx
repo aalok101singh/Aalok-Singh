@@ -15,9 +15,21 @@ export default function RequestFeed(): JSX.Element {
 
   if (s.emgs.length === 0) return <Empty text="no active requests" />
 
+  // §10.2 v1.1 thousands-safe rendering: top-50 cards by triage order + "+N more"
+  const rank: Record<string, number> = { ECHO: 0, DELTA: 1, CHARLIE: 2, BRAVO: 3, ALPHA: 4 }
+  const sorted = [...s.emgs].sort((a, b) =>
+    (rank[a.urgency] - rank[b.urgency]) || (a.filedAtS - b.filedAtS))
+  const top50 = sorted.slice(0, 50).reverse() // newest visually on top within tier order
+  const overflow = sorted.length - top50.length
+
   return (
     <div className="flex flex-col gap-2 overflow-y-auto p-3">
-      {[...s.emgs].reverse().map((e) => {
+      {overflow > 0 && (
+        <div className="rounded-card border border-warn/50 bg-warn-soft px-2.5 py-1.5 text-center text-xs font-medium text-warn">
+          +{overflow.toLocaleString()} more in queue (aggregate telemetry holds all)
+        </div>
+      )}
+      {top50.map((e) => {
         const elapsed = nowS - e.filedAtS
         const frac = Math.min(1, Math.max(0.02, elapsed / e.slaS))
         const breached = elapsed > e.slaS

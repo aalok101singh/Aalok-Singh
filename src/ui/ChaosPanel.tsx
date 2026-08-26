@@ -5,6 +5,7 @@ const TRIGGERS: { label: string; action: string; danger?: boolean }[] = [
   { label: 'Inject DELTA', action: 'INJECT_DELTA', danger: true },
   { label: 'Inject CHARLIE', action: 'INJECT_CHARLIE' },
   { label: 'Mass influx ×8', action: 'MASS_INFLUX_8', danger: true },
+  { label: 'Stress surge ×1000', action: 'STRESS_SURGE_1000', danger: true },
   { label: 'Close random road', action: 'CLOSE_RANDOM_ROAD' },
   { label: "Sever active mission's road", action: 'SEVER_ACTIVE_MISSION_ROAD' },
   { label: 'Reopen all roads', action: 'REOPEN_ALL' },

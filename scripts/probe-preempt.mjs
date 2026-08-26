@@ -1,0 +1,31 @@
+globalThis.performance ??= { now: () => Number(process.hrtime.bigint() / 1000000n) }
+const { SimEngine } = await import('../src/engine/sim.ts')
+const { proceduralWorld } = await import('../src/engine/world.ts')
+const w = proceduralWorld(42, 'DEMO')
+const s = new SimEngine(w, 42)
+s.onEvent = (e) => console.log('EV', e.kind, '|', e.text.slice(0, 90))
+const bravo = s.createEmergency(w.villages[0].node, 'BRAVO', 'GENERAL', 'FAMILY')
+s.tick()
+for (const a of w.ambulances) if (a.state === 'AVAILABLE') a.state = 'TO_SCENE'
+const echo = s.createEmergency(w.villages[1].node, 'ECHO', 'CARDIOLOGY', 'FAMILY')
+// step into dispatchBatch manually
+const anyS = s
+anyS.preemptForEcho()
+console.log('after preempt: bravo=', bravo.status, 'avail=', w.ambulances.filter(a => a.state === 'AVAILABLE').map(a => a.callsign))
+const rec = s.recommend(echo.id)
+console.log('recommendation:', rec ? `${rec.ambCallsign} -> fac ${rec.chosenId} | ${rec.summary}` : 'NULL')
+const { astar } = await import('../src/engine/pathfind.ts')
+const amb = w.ambulances.find(a => a.state === 'AVAILABLE')
+console.log('amb.at=', amb.at, 'echo.village=', echo.village)
+const r1 = astar(s.g, amb.at, echo.village)
+console.log('astar amb->village found:', r1.found, 'dist:', r1.dist)
+const dh = w.facilities.find(f => f.specs.includes('CARDIOLOGY'))
+console.log('DH:', dh?.name, 'bedsFree:', dh?.bedsFree, 'strep qty:', dh?.meds.filter(m => m.drug === 'Streptokinase').reduce((a, m) => a + m.qty, 0))
+const r2 = astar(s.g, echo.village, dh.node)
+console.log('astar village->DH found:', r2.found, 'dist:', r2.dist)
+const { evaluate } = await import('../src/engine/dispatch.ts')
+const ctx = { g: s.g, facilities: w.facilities, closedEdges: new Set(), clockS: s.clockS }
+const { evals, pairings, best } = evaluate(ctx, echo.village, echo.need, [{ id: amb.id, at: amb.at, available: true }], [])
+console.log('evals eligible:', evals.filter(e => e.eligible).length, '| pairings:', pairings.size, '| best:', best)
+console.log('ineligible reasons:', evals.filter(e => !e.eligible && !e.reject === false).map(e => `${e.facilityId}:${e.reject}`).join(','))
+console.log('facilities total:', w.facilities.length, 'cardio specs:', w.facilities.filter(f => f.specs.includes('CARDIOLOGY')).length)

@@ -8,6 +8,9 @@ export type Preset = 'FULL' | 'MED' | 'DEMO'
 
 const PRESET_NODES: Record<Preset, number> = { FULL: 50000, MED: 5000, DEMO: 600 }
 const PRESET_NEIGHBORS: Record<Preset, number> = { FULL: 4, MED: 3, DEMO: 2 }
+// v1.1 D8 HARD FLOORS: FULL ≥50K nodes / ≥200K directed CSR edges / ≥5,200 villages — floors, never targets
+const PRESET_EDGES_FLOOR: Record<Preset, number> = { FULL: 200000, MED: 20000, DEMO: 1500 }
+const PRESET_VILLAGES: Record<Preset, number> = { FULL: 5200, MED: 1500, DEMO: 300 }
 
 const VILLAGE_NAMES = [
   'Rampura Kalan', 'Atru', 'Shahabad', 'Chhabra', 'Kishanganj', 'Mangrol', 'Anta', 'Baran',
@@ -77,23 +80,55 @@ export function proceduralWorld(seed: number, preset: Preset): World {
     if (!arr) { arr = []; bucket.set(key, arr) }
     arr.push(v)
   }
+  // neighbor candidates per node — bounded selection keeps memory flat on 50K-node worlds
+  const CAND_CAP = 48
+  const candCache: { u: number; d: number }[][] = []
   for (let v = 0; v < n; v++) {
-    const cands: { u: number; d: number }[] = []
+    let cands: { u: number; d: number }[] = [{ u: -1, d: Infinity }]
     const cx = Math.floor(lat[v] / cellDeg), cy = Math.floor(lng[v] / cellDeg)
     for (let dx = -2; dx <= 2; dx++) {
       for (let dy = -2; dy <= 2; dy++) {
         const arr = bucket.get((((cx + dx) & 0xffff) << 16) | ((cy + dy) & 0xffff))
         if (!arr) continue
-        for (const u of arr) if (u !== v) cands.push({ u, d: haversineM(lat[v], lng[v], lat[u], lng[u]) })
+        for (const u of arr) {
+          if (u === v) continue
+          const d = haversineM(lat[v], lng[v], lat[u], lng[u])
+          if (cands.length < CAND_CAP || d < cands[cands.length - 1].d) {
+            cands.push({ u, d })
+          }
+        }
       }
     }
-    cands.sort((p, q) => p.d - q.d)
+    cands = cands.filter((c) => c.u !== -1).sort((p, q) => p.d - q.d).slice(0, CAND_CAP)
+    candCache.push(cands)
     for (let j = 0; j < Math.min(kNeighbors, cands.length); j++) addEdge(v, cands[j].u)
   }
 
   bridgeComponents(n, lat, lng, edges, addEdge)
 
-  return finishWorld(BBOX, lat, lng, edges, rng, seed)
+  // grid-based snapper: reuse the lattice buckets; expand rings, fall back to full scan
+  const snapper = (pLa: number, pLo: number): number => {
+    const cx = Math.floor(pLa / cellDeg), cy = Math.floor(pLo / cellDeg)
+    for (let ring = 1; ring <= Math.max(cols, rows); ring++) {
+      let best = -1, bd = Infinity
+      for (let dx = -ring; dx <= ring; dx++) {
+        for (let dy = -ring; dy <= ring; dy++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring && !(ring === 1)) continue
+          if (Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue
+          const arr = bucket.get((((cx + dx) & 0xffff) << 16) | ((cy + dy) & 0xffff))
+          if (!arr) continue
+          for (const u of arr) {
+            const d = haversineM(lat[u], lng[u], pLa, pLo)
+            if (d < bd) { bd = d; best = u }
+          }
+        }
+      }
+      if (best !== -1) return best
+    }
+    return snapNearest(lat, lng, pLa, pLo)
+  }
+
+  return finishWorld(BBOX, lat, lng, edges, rng, seed, preset, candCache, addEdge, snapper)
 }
 
 /** Union-find over built edges; bridge each minority component to its nearest foreign node. */
@@ -136,23 +171,43 @@ function finishWorld(
   BBOX: [number, number, number, number],
   lat: Float64Array, lng: Float64Array,
   edges: { a: number; b: number; lenM: number; cls: number }[],
-  rng: () => number, seed: number,
+  rng: () => number, seed: number, preset: Preset,
+  candCache?: { u: number; d: number }[][],
+  addEdge?: (a: number, b: number) => void,
+  snapper?: (pLa: number, pLo: number) => number,
 ): World {
   const n = lat.length
-  const dirEdges: [number, number, number, number, number][] = []
+  // D8 v1.1 floor: widen the neighbor ring until the directed-edge count meets the preset floor
+  if (candCache && addEdge) {
+    let k = kNeighborsOf(preset)
+    const undirectedFloor = Math.ceil(PRESET_EDGES_FLOOR[preset] / 2)
+    while (edges.length < undirectedFloor && candCache.some((c) => c.length >= k)) {
+      for (let v = 0; v < n; v++) {
+        const c = candCache[v]
+        if (k < c.length) addEdge(v, c[k].u)
+      }
+      k++
+      if (k > 64) break // safety valve
+    }
+    candCache.length = 0 // free before the heavy phases below
+  }
+
+  // CSR filled directly (no intermediate tuple arrays / no giant sort)
+  const M2 = edges.length * 2
+  const adjOff = new Uint32Array(n + 1)
+  for (const e of edges) { adjOff[e.a + 1]++; adjOff[e.b + 1]++ }
+  for (let v = 0; v < n; v++) adjOff[v + 1] += adjOff[v]
+  const adjDst = new Uint32Array(M2), adjW = new Uint32Array(M2), adjLen = new Uint32Array(M2), adjCls = new Uint8Array(M2)
+  const cursorFill = Uint32Array.from(adjOff)
   for (const e of edges) {
     const wgt = Math.round(e.lenM / (CONST_SPEED[e.cls] * 1000 / 3600))
-    dirEdges.push([e.a, e.b, wgt, Math.round(e.lenM), e.cls], [e.b, e.a, wgt, Math.round(e.lenM), e.cls])
+    const lenM = Math.round(e.lenM)
+    let slot = cursorFill[e.a]++
+    adjDst[slot] = e.b; adjW[slot] = wgt; adjLen[slot] = lenM; adjCls[slot] = e.cls
+    slot = cursorFill[e.b]++
+    adjDst[slot] = e.a; adjW[slot] = wgt; adjLen[slot] = lenM; adjCls[slot] = e.cls
   }
-  dirEdges.sort((x, y) => x[0] - y[0])
-  const M = dirEdges.length
-  const adjOff = new Uint32Array(n + 1)
-  const adjDst = new Uint32Array(M), adjW = new Uint32Array(M), adjLen = new Uint32Array(M), adjCls = new Uint8Array(M)
-  for (let j = 0; j < M; j++) {
-    adjOff[dirEdges[j][0] + 1]++
-    adjDst[j] = dirEdges[j][1]; adjW[j] = dirEdges[j][2]; adjLen[j] = dirEdges[j][3]; adjCls[j] = dirEdges[j][4]
-  }
-  for (let v = 0; v < n; v++) adjOff[v + 1] += adjOff[v]
+
 
   // proportional counts (D8 scaling of §7.1 seeding)
   const scale = n / 50000
@@ -176,10 +231,11 @@ function finishWorld(
     specs.map((spec) => ({ spec: spec as World['facilities'][number]['doctors'][number]['spec'], onDutyUntil: 36000 + Math.floor(rng() * 28800) }))
 
   const facilities: World['facilities'] = []
+  const snap = snapper ?? ((pLa: number, pLo: number): number => snapNearest(lat, lng, pLa, pLo))
   const pushFac = (name: string, tier: World['facilities'][number]['tier'], specs: string[], beds: number): void => {
     facilities.push({
       id: facilities.length,
-      node: snapNearest(lat, lng, BBOX[0] + rng() * (BBOX[2] - BBOX[0]), BBOX[1] + rng() * (BBOX[3] - BBOX[1])),
+      node: snap(BBOX[0] + rng() * (BBOX[2] - BBOX[0]), BBOX[1] + rng() * (BBOX[3] - BBOX[1])),
       name, tier,
       specs: specs as World['facilities'][number]['specs'],
       bedsTotal: beds, bedsFree: beds,
@@ -195,12 +251,12 @@ function finishWorld(
   for (let j = 0; j < facCounts.PHC; j++) pushFac(`PHC ${j + 1}`, 'PHC', ['GENERAL'], 8)
   for (let j = 0; j < facCounts.HSC; j++) pushFac(`HSC ${String(j + 1).padStart(2, '0')}`, 'HSC', [], 0)
 
-  const villageCount = Math.max(8, Math.round(150 * cubeRoot))
+  const villageCount = PRESET_VILLAGES[preset] // v1.1: 5,200 / 1,500 / 300 — organizer floors
   const villages: World['villages'] = []
   for (let j = 0; j < villageCount; j++) {
     const name = VILLAGE_NAMES[j % VILLAGE_NAMES.length]
     villages.push({
-      node: snapNearest(lat, lng, BBOX[0] + rng() * (BBOX[2] - BBOX[0]), BBOX[1] + rng() * (BBOX[3] - BBOX[1])),
+      node: snap(BBOX[0] + rng() * (BBOX[2] - BBOX[0]), BBOX[1] + rng() * (BBOX[3] - BBOX[1])),
       name: villageCount <= VILLAGE_NAMES.length ? name : `${name} ${Math.floor(j / VILLAGE_NAMES.length) + 1}`,
       pop: 300 + Math.floor(rng() * 2500),
     })
@@ -227,5 +283,6 @@ function finishWorld(
 
 const CONST_SPEED = [60, 40, 25]
 const CONST_FLEET = { ALS: 8, BLS: 16 }
+function kNeighborsOf(preset: Preset): number { return PRESET_NEIGHBORS[preset] }
 
 

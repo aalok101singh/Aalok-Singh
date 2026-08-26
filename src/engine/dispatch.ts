@@ -78,8 +78,11 @@ export function evaluate(
     const resp = astar(ctx.g, amb.at, villageNode, pathOpts(ctx))
     if (!resp.found) continue
     const responseS = Math.round(resp.dist)
-    // ≤6 nearest facilities by haversine prefilter (§6.3 step 3)
-    const nearest = [...ctx.facilities].sort((a, b) => havM(ctx, villageNode, a.node) - havM(ctx, villageNode, b.node)).slice(0, 6)
+    // ≤6 nearest ELIGIBLE facilities by haversine prefilter (§6.3 step 3)
+    const nearest = ctx.facilities
+      .filter((f) => evals[f.id].eligible)
+      .sort((a, b) => havM(ctx, villageNode, a.node) - havM(ctx, villageNode, b.node))
+      .slice(0, 6)
     for (const f of nearest) {
       const ev = evals[f.id]
       if (!ev.eligible) continue
