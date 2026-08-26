@@ -467,6 +467,15 @@ export class SimEngine {
     return { from: mr.path[last], to: mr.path[last], t01: 1 }
   }
 
+  /** Remaining nodes of the current leg (current edge + rest) for full-route rendering. */
+  remainingPath(mr: MissionRuntime): number[] {
+    const elapsed = this.clockS - mr.legStartS
+    for (let i = 1; i < mr.cumW.length; i++) {
+      if (elapsed <= mr.cumW[i]) return mr.path.slice(Math.max(0, i - 1))
+    }
+    return mr.path.length > 0 ? [mr.path[mr.path.length - 1]] : []
+  }
+
   private completeKpis(mr: MissionRuntime): void {
     const k = this.kpis
     const emg = this.emergencies.get(mr.m.emg)

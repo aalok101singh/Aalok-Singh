@@ -39,6 +39,7 @@ export default function RequestFeed(): JSX.Element {
             <button
               className={`w-full rounded-card border bg-surface p-2.5 text-left shadow-card ${awaiting ? 'border-warn' : 'border-border'}`}
               onClick={() => {
+                window.dispatchEvent(new CustomEvent('caregrid:follow', { detail: e.id }))
                 if (awaiting && s.manual) setSelected(selected === e.id ? null : e.id)
               }}
             >

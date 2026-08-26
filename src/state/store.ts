@@ -106,7 +106,7 @@ const send = (msg: Parameters<Worker['postMessage']>[0]): void => { worker?.post
 export const actions = {
   start: (): void => send({ type: 'START' }),
   pause: (): void => send({ type: 'PAUSE' }),
-  speed: (mult: 1 | 2 | 5): void => send({ type: 'SPEED', mult }),
+  speed: (mult: 1 | 2 | 5 | 20 | 60): void => send({ type: 'SPEED', mult }),
   director: (script: 'MOCK' | 'MCI' | 'DISASTER'): void => {
     set({ scenario: script === 'MOCK' ? 'Official Mock' : script === 'MCI' ? 'Mass Casualty (MCI)' : 'Monsoon Disaster' })
     send({ type: 'DIRECTOR', script })

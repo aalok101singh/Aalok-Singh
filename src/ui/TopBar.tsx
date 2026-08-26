@@ -21,11 +21,11 @@ export default function TopBar(): JSX.Element {
         >
           {s.running ? `⏸ ${t('action.pause')}` : `▶ ${t('action.resume')}`}
         </button>
-        {[1, 2, 5].map((m) => (
+        {[1, 2, 5, 20, 60].map((m) => (
           <button
             key={m}
             className={`rounded-control border px-1.5 py-0.5 text-xs font-mono ${s.speedMult === m ? 'border-primary bg-primary-soft text-primary' : 'border-border'}`}
-            onClick={() => actions.speed(m as 1 | 2 | 5)}
+            onClick={() => actions.speed(m as 1 | 2 | 5 | 20 | 60)}
           >
             {m}×
           </button>

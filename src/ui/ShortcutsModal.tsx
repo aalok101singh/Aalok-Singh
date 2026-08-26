@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 
 const SHORTCUTS: [string, string][] = [
   ['Space', 'pause / resume'],
-  ['1 / 2 / 3', 'speed 1× / 2× / 5×'],
+  ['1 – 5', 'speed 1× / 2× / 5× / 20× / 60×'],
   ['E', 'inject DELTA emergency'],
   ['D', 'inject ECHO emergency'],
   ['M', 'toggle AUTO / MANUAL dispatch'],
-  ['F', 'follow-cam'],
+  ['F', 'follow newest emergency'],
+  ['click card', 'follow that ambulance on the map'],
   ['W', 'wavefront visualizer'],
   ['R', 'scenario report card'],
   ['+ / -', 'zoom'],

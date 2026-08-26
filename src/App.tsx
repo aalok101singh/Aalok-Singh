@@ -48,6 +48,8 @@ export default function App(): JSX.Element {
         case '1': actions.speed(1); break
         case '2': actions.speed(2); break
         case '3': actions.speed(5); break
+        case '4': actions.speed(20); break
+        case '5': actions.speed(60); break
         case 'e': case 'E': actions.chaos('INJECT_DELTA'); break
         case 'd': case 'D': actions.chaos('INJECT_ECHO'); break
         case 'm': case 'M': actions.mode(!getSnapshot().manual); break

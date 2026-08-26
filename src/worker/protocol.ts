@@ -21,6 +21,8 @@ export interface WorldStats {
 export interface AmbDelta {
   id: number; callsign: string; cls: string; state: string;
   from: number; to: number; t01: number
+  mission: number
+  route: number[]
 }
 
 export interface EmgView {
@@ -59,7 +61,7 @@ export interface BenchResult {
 export type ToWorker =
   | { type: 'INIT'; world: 'osm' | 'procedural'; seed: number; preset: 'FULL' | 'MED' | 'DEMO' }
   | { type: 'START' } | { type: 'PAUSE' }
-  | { type: 'SPEED', mult: 1 | 2 | 5 }
+  | { type: 'SPEED', mult: 1 | 2 | 5 | 20 | 60 }
   | { type: 'DIRECTOR', script: 'MOCK' | 'MCI' | 'DISASTER' }
   | { type: 'CHAOS', action: ChaosAction }
   | { type: 'MODE', manual: boolean }

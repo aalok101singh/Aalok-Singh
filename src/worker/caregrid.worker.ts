@@ -15,7 +15,7 @@ let world: World | null = null
 let gv: GraphView | null = null
 let seed = 42
 let running = false
-let speedMult: 1 | 2 | 5 = 1
+let speedMult: 1 | 2 | 5 | 20 | 60 = 1
 let manualMode = false
 let clockS = 0
 let pumpTimer: ReturnType<typeof setInterval> | null = null
@@ -82,8 +82,8 @@ function tickOnce(): void {
   // 100ms pump; sim advances speedMult sim-seconds per wall-second in TICK_S steps,
   // catch-up capped at 30s for tab throttling (§8)
   const PUMP_MS = 100
-  accMs += PUMP_MS * Math.min(speedMult, 30)
-  let guard = 60
+  accMs += PUMP_MS * Math.min(speedMult, 60)
+  let guard = 120
   while (accMs >= CONST.TICK_S * 1000 && guard-- > 0) {
     accMs -= CONST.TICK_S * 1000
     sim.tick()
@@ -113,12 +113,16 @@ function postState(): void {
   const s = sim
   const ambs: AmbDelta[] = s.world.ambulances.map((a) => {
     let from = a.at, to = a.at, t01 = 0
+    let route: number[] = []
+    let mission = -1
     const mr = [...s.missions.values()].find((m) => m.m.amb === a.id)
+    if (mr) mission = mr.m.id
     if (mr && (mr.leg === 'TO_SCENE' || mr.leg === 'TO_FACILITY')) {
       const p = s.positionOnPath(mr)
       from = p.from; to = p.to; t01 = p.t01
+      route = s.remainingPath(mr).slice(0, 400)
     }
-    return { id: a.id, callsign: a.callsign, cls: a.cls, state: a.state, from, to, t01 }
+    return { id: a.id, callsign: a.callsign, cls: a.cls, state: a.state, from, to, t01, mission, route }
   })
   const emgs: EmgView[] = []
   for (const e of s.emergencies.values()) {
