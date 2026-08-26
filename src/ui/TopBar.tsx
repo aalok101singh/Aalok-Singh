@@ -34,6 +34,13 @@ export default function TopBar(): JSX.Element {
       <div className="ml-auto flex items-center gap-2">
         <ModeToggle />
         <button
+          className={`rounded-control border px-2 py-1 text-xs font-medium ${getSnapshot().batchOptimalOn ? 'border-primary bg-primary-soft text-primary' : 'border-border'}`}
+          onClick={() => actions.batchOptimal(!getSnapshot().batchOptimalOn)}
+          title="Batch assignment: exhaustive optimal (≤5 queued) vs greedy nearest"
+        >
+          batch: {getSnapshot().batchOptimalOn ? 'optimal' : 'greedy'}
+        </button>
+        <button
           className={`rounded-control border px-2 py-1 text-xs font-medium ${getSnapshot().wavefrontOn ? 'border-primary bg-primary-soft text-primary' : 'border-border'}`}
           onClick={() => actions.wavefront(!getSnapshot().wavefrontOn)}
         >
