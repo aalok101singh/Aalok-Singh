@@ -77,6 +77,7 @@ export class SimEngine {
   lastTraces: DecisionTrace[] = []
   kpis: Kpis
   directorArmed: ((s: SimEngine) => void) | null = null
+  onWavefront: ((settled: number[], frontier: number[]) => void) | null = null
   weatherForceMm: number | null = null
   onEvent: ((e: SimEvent) => void) | null = null
   degradedBannerShown = false
@@ -222,7 +223,10 @@ export class SimEngine {
   recommend(emgId: number): DecisionTrace | null {
     const e = this.emergencies.get(emgId)
     if (!e) return null
-    const ctx = { g: this.g, facilities: this.world.facilities, closedEdges: this.closedEdges, clockS: this.clockS }
+    const ctx = {
+      g: this.g, facilities: this.world.facilities, closedEdges: this.closedEdges, clockS: this.clockS,
+      onPathfind: this.wavefront && this.onWavefront ? this.onWavefront : undefined,
+    }
     const refs = this.phaseRefs()
     const ambs = this.availableAmbulances()
     const { evals, best } = evaluate(ctx, e.village, e.need, ambs, refs)
@@ -251,7 +255,10 @@ export class SimEngine {
   }
 
   private dispatchBatch(queued: RuntimeEmergency[]): void {
-    const ctx = { g: this.g, facilities: this.world.facilities, closedEdges: this.closedEdges, clockS: this.clockS }
+    const ctx = {
+      g: this.g, facilities: this.world.facilities, closedEdges: this.closedEdges, clockS: this.clockS,
+      onPathfind: this.wavefront && this.onWavefront ? this.onWavefront : undefined,
+    }
     const ambs = this.availableAmbulances()
     const refs = this.phaseRefs()
     if (ambs.length === 0) {

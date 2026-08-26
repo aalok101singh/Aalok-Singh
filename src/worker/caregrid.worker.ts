@@ -44,6 +44,18 @@ async function init(src: 'osm' | 'procedural', sd: number, preset: 'FULL' | 'MED
   sim = new SimEngine(w, seed)
   gv = sim.g
   sim.onEvent = () => { /* events are pulled in STATE diffs */ }
+  // §10.3 wavefront streaming: throttle samples to ≤4k settled + 1k frontier, ≤10 msgs/sec
+  let lastWf = 0
+  sim.onWavefront = (settled, frontier) => {
+    const now = performance.now()
+    if (now - lastWf < 100) return
+    lastWf = now
+    post({
+      type: 'WAVEFRONT',
+      settled: Uint32Array.from(settled.slice(0, 4096)),
+      frontier: Uint32Array.from(frontier.slice(0, 1024)),
+    })
+  }
   post({
     type: 'READY',
     worldStats: {
@@ -53,6 +65,14 @@ async function init(src: 'osm' | 'procedural', sd: number, preset: 'FULL' | 'MED
     },
     facilities: w.facilities,
     villages: w.villages,
+  })
+  // geometry for the map canvas (main thread never mutates engine state)
+  post({
+    type: 'GEOMETRY',
+    lat: w.lat.slice(), lng: w.lng.slice(),
+    adjOff: w.adjOff.slice(), adjDst: w.adjDst.slice(), adjCls: w.adjCls.slice(),
+    bbox: w.bbox,
+    villages: w.villages, facilities: w.facilities.map((f) => ({ id: f.id, node: f.node, name: f.name, tier: f.tier })),
   })
 }
 

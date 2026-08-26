@@ -51,6 +51,17 @@ export function getSnapshot(): Snapshot {
   return snap
 }
 
+// geometry bus for MapCanvas (kept outside React snapshot for canvas perf)
+export interface Geometry {
+  lat: Float64Array; lng: Float64Array
+  adjOff: Uint32Array; adjDst: Uint32Array; adjCls: Uint8Array
+  bbox: [number, number, number, number]
+  villages: { node: number; name: string; pop: number }[]
+  facilities: { id: number; node: number; name: string; tier: string }[]
+}
+let geometry: Geometry | null = null
+export function getGeometry(): Geometry | null { return geometry }
+
 export function ensureWorker(): Worker {
   if (worker) return worker
   worker = new Worker(new URL('../worker/caregrid.worker.ts', import.meta.url), { type: 'module' })
@@ -61,6 +72,11 @@ export function ensureWorker(): Worker {
       case 'READY':
         set({ ready: true, worldStats: m.worldStats, facilities: m.facilities.map((f) => ({ id: f.id, name: f.name, tier: f.tier, bedsFree: f.bedsFree, bedsTotal: f.bedsTotal })) })
         break
+      case 'GEOMETRY': {
+        geometry = { lat: m.lat, lng: m.lng, adjOff: m.adjOff, adjDst: m.adjDst, adjCls: m.adjCls, bbox: m.bbox, villages: m.villages, facilities: m.facilities }
+        listeners.forEach((l) => l()) // nudge canvas subscribers
+        break
+      }
       case 'STATE': {
         const lastEv = m.events[m.events.length - 1]
         set({
@@ -74,7 +90,7 @@ export function ensureWorker(): Worker {
       case 'RECOMMENDATION': set({ recommendation: m.trace }); break
       case 'BENCH_RESULT': set({ bench: m.result }); break
       case 'WAVEFRONT': wavefrontCb?.(m.settled, m.frontier); break
-      case 'REPORT': break
+      default: break
     }
   }
   worker.postMessage({ type: 'INIT', world: 'procedural', seed, preset: 'FULL' })

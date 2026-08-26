@@ -86,6 +86,14 @@ export interface StateMsg {
 }
 export type FromWorker =
   | { type: 'READY'; worldStats: WorldStats; facilities: Facility[]; villages: { node: number; name: string; pop: number }[] }
+  | {
+    type: 'GEOMETRY'
+    lat: Float64Array; lng: Float64Array
+    adjOff: Uint32Array; adjDst: Uint32Array; adjCls: Uint8Array
+    bbox: [number, number, number, number]
+    villages: { node: number; name: string; pop: number }[]
+    facilities: { id: number; node: number; name: string; tier: string }[]
+  }
   | StateMsg
   | { type: 'RECOMMENDATION'; trace: DecisionTrace | null }
   | { type: 'WAVEFRONT'; settled: Uint32Array; frontier: Uint32Array }

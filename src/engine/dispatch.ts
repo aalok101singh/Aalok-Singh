@@ -11,6 +11,8 @@ export interface DispatchCtx {
   closedEdges: Set<number>
   nodeMult?: Float32Array
   clockS: number
+  /** §10.3 wavefront streaming: called with settled/frontier samples during pathfinding. */
+  onPathfind?: (settled: number[], frontier: number[]) => void
 }
 
 export interface AmbView {
@@ -98,7 +100,7 @@ export function evaluate(
 }
 
 function pathOpts(ctx: DispatchCtx) {
-  return { closed: ctx.closedEdges, nodeMult: ctx.nodeMult }
+  return { closed: ctx.closedEdges, nodeMult: ctx.nodeMult, onProgress: ctx.onPathfind }
 }
 
 function pairKey(ambId: number, facId: number): number {
