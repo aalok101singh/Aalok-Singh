@@ -8,6 +8,7 @@ import DecisionLog from './ui/DecisionLog'
 import ChaosPanel from './ui/ChaosPanel'
 import BenchmarkTab from './ui/BenchmarkTab'
 import KpiStrip from './ui/KpiStrip'
+import ReportCard from './ui/ReportCard'
 import ShortcutsModal from './ui/ShortcutsModal'
 import { actions, ensureWorker, getSnapshot, subscribe } from './state/store'
 import { t } from './i18n/t'
@@ -23,12 +24,19 @@ function useSnapshot() {
 export default function App(): JSX.Element {
   const s = useSnapshot()
   const [tab, setTab] = useState<Tab>('requests')
+  const [reportOpen, setReportOpen] = useState(false)
   const booted = useRef(false)
   useEffect(() => {
     if (!booted.current) {
       booted.current = true
       ensureWorker()
     }
+  }, [])
+
+  useEffect(() => {
+    const onReport = (): void => setReportOpen(true)
+    window.addEventListener('caregrid:report', onReport)
+    return () => window.removeEventListener('caregrid:report', onReport)
   }, [])
 
   // keyboard shortcuts (§10.2)
@@ -45,6 +53,7 @@ export default function App(): JSX.Element {
         case 'm': case 'M': actions.mode(!getSnapshot().manual); break
         case 'f': case 'F': window.dispatchEvent(new CustomEvent('caregrid:follow')); break
         case 'w': case 'W': actions.wavefront(!getSnapshot().wavefrontOn); break
+        case 'r': case 'R': setReportOpen(true); break
         case '?': window.dispatchEvent(new CustomEvent('caregrid:shortcuts')); break
         case '+': window.dispatchEvent(new CustomEvent('caregrid:zoom', { detail: 1.2 })); break
         case '-': window.dispatchEvent(new CustomEvent('caregrid:zoom', { detail: 0.8 })); break
@@ -89,6 +98,7 @@ export default function App(): JSX.Element {
         </div>
       </div>
       <KpiStrip />
+      {reportOpen && <ReportCard onClose={() => setReportOpen(false)} />}
       <ShortcutsModal />
       <div aria-live="polite" className="sr-only">{s.ariaAnnounce}</div>
     </div>

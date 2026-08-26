@@ -1,0 +1,14 @@
+{
+  "name": "CareGrid — District EMS Control",
+  "short_name": "CareGrid",
+  "description": "Rural emergency dispatch console for Baran district, Rajasthan. Offline-capable.",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#FAFAF7",
+  "theme_color": "#4F46E5",
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

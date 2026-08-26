@@ -21,6 +21,12 @@ export default function KpiStrip(): JSX.Element {
       <Metric label="SLA" value={`${sla}%`} good={sla >= 90} />
       <Metric label="Util" value={`${util}%`} />
       <Metric label="missions" value={String(k?.missionsCompleted ?? 0)} />
+      <button
+        className="ml-auto rounded border border-border px-2 py-1 text-xs font-medium text-muted hover:text-primary"
+        onClick={() => window.dispatchEvent(new CustomEvent('caregrid:report'))}
+      >
+        Report (R)
+      </button>
     </div>
   )
 }

@@ -23,6 +23,7 @@ export interface Snapshot {
   bench: BenchResult | null
   wavefrontOn: boolean
   ariaAnnounce: string
+  scenario: string
 }
 
 const initial: Snapshot = {
@@ -30,7 +31,7 @@ const initial: Snapshot = {
   running: false, speedMult: 1, manual: false,
   ambs: [], emgs: [], facDeltas: [], events: [], traces: [],
   kpis: null, closedEdges: [], recommendation: null, bench: null,
-  wavefrontOn: false, ariaAnnounce: '',
+  wavefrontOn: false, ariaAnnounce: '', scenario: 'Free run',
 }
 
 let snap: Snapshot = initial
@@ -104,7 +105,10 @@ export const actions = {
   start: (): void => send({ type: 'START' }),
   pause: (): void => send({ type: 'PAUSE' }),
   speed: (mult: 1 | 2 | 5): void => send({ type: 'SPEED', mult }),
-  director: (script: 'MOCK' | 'MCI' | 'DISASTER'): void => send({ type: 'DIRECTOR', script }),
+  director: (script: 'MOCK' | 'MCI' | 'DISASTER'): void => {
+    set({ scenario: script === 'MOCK' ? 'Official Mock' : script === 'MCI' ? 'Mass Casualty (MCI)' : 'Monsoon Disaster' })
+    send({ type: 'DIRECTOR', script })
+  },
   chaos: (action: string): void => send({ type: 'CHAOS', action }),
   mode: (manual: boolean): void => send({ type: 'MODE', manual }),
   wavefront: (on: boolean): void => { set({ wavefrontOn: on }); send({ type: 'WAVEFRONT_MODE', on }) },

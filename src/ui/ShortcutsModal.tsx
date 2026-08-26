@@ -8,6 +8,7 @@ const SHORTCUTS: [string, string][] = [
   ['M', 'toggle AUTO / MANUAL dispatch'],
   ['F', 'follow-cam'],
   ['W', 'wavefront visualizer'],
+  ['R', 'scenario report card'],
   ['+ / -', 'zoom'],
   ['?', 'this overlay'],
 ]

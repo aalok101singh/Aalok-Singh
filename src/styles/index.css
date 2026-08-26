@@ -45,3 +45,9 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+@media print {
+  body * { visibility: hidden; }
+  .print-target, .print-target * { visibility: visible; }
+  .print-target { position: fixed; inset: 0; background: var(--surface); color: var(--ink); padding: 24px; z-index: 999; }
+}
