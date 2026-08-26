@@ -136,41 +136,50 @@ export default function MapCanvas(): JSX.Element {
       const minLa = v.cy - hpx / (2 * v.scale * 111320), maxLa = v.cy + hpx / (2 * v.scale * 111320)
       const minLo = v.cx - wpx / (2 * v.scale * 102000), maxLo = v.cx + wpx / (2 * v.scale * 102000)
 
-      // ---- edges with LOD ----
+      // ---- edges with LOD (batched: one beginPath/stroke per style bucket) ----
       const lod = zoom < 20 ? 0 : zoom < 200 ? 1 : 2
       const closedSet = new Set(snap.closedEdges)
+      const hasClosures = closedSet.size > 0
       const off = geo.adjOff
       const adjDst = geo.adjDst
-      const lw = lod === 2 ? 1.5 : 1
-      ctx2d.lineWidth = lw
+      ctx2d.lineWidth = lod === 2 ? 1.5 : 1
 
       const N = geo.lat.length
-      for (let u = 0; u < N; u++) {
-        const laU = geo.lat[u], loU = geo.lng[u]
-        if (laU < minLa || laU > maxLa || loU < minLo || loU > maxLo) continue
-        for (let e = off[u]; e < off[u + 1]; e++) {
-          const vv = adjDst[e]
-          if (vv <= u) continue // draw each undirected edge once
-          const laV = geo.lat[vv], loV = geo.lng[vv]
-          if (laV < minLa || laV > maxLa || loV < minLo || loV > maxLo) continue
-          const cls = geo.adjCls[e]
-          if (lod === 0 && cls !== 0) continue // skeleton only
-          const [x0, y0] = toScreen(v, laU, loU, wpx, hpx)
-          const [x1, y1] = toScreen(v, laV, loV, wpx, hpx)
-          const closedEdge = closedSet.has(e)
-          ctx2d.strokeStyle = closedEdge ? '#DC2626' : ROAD_COLOR[cls] ?? '#D6D3CC'
-          ctx2d.beginPath()
-          ctx2d.moveTo(x0, y0)
-          ctx2d.lineTo(x1, y1)
-          ctx2d.stroke()
-          if (closedEdge) {
-            // red hatch tick at midpoint
-            const mx = (x0 + x1) / 2, my = (y0 + y1) / 2
-            ctx2d.beginPath()
-            ctx2d.moveTo(mx - 3, my - 3); ctx2d.lineTo(mx + 3, my + 3)
-            ctx2d.stroke()
+      const drawBucket = (b: number): number[] => {
+        const ticks: number[] = []
+        ctx2d.strokeStyle = b === 3 ? '#DC2626' : ROAD_COLOR[b] ?? '#D6D3CC'
+        ctx2d.globalAlpha = b === 2 && lod === 0 ? 0.55 : 1
+        ctx2d.beginPath()
+        for (let u = 0; u < N; u++) {
+          const laU = geo.lat[u], loU = geo.lng[u]
+          if (laU < minLa || laU > maxLa || loU < minLo || loU > maxLo) continue
+          for (let e = off[u]; e < off[u + 1]; e++) {
+            const vv = adjDst[e]
+            if (vv <= u) continue // draw each undirected edge once
+            const isClosed = hasClosures && closedSet.has(e)
+            if (b === 3 ? !isClosed : isClosed || geo.adjCls[e] !== b) continue
+            const laV = geo.lat[vv], loV = geo.lng[vv]
+            if (laV < minLa || laV > maxLa || loV < minLo || loV > maxLo) continue
+            const [x0, y0] = toScreen(v, laU, loU, wpx, hpx)
+            const [x1, y1] = toScreen(v, laV, loV, wpx, hpx)
+            ctx2d.moveTo(x0, y0)
+            ctx2d.lineTo(x1, y1)
+            if (b === 3) ticks.push((x0 + x1) / 2, (y0 + y1) / 2)
           }
         }
+        ctx2d.stroke()
+        ctx2d.globalAlpha = 1
+        return ticks
+      }
+      drawBucket(0)
+      drawBucket(1)
+      drawBucket(2)
+      const closedTicks = hasClosures ? drawBucket(3) : []
+      for (let i = 0; i < closedTicks.length; i += 2) {
+        const mx = closedTicks[i], my = closedTicks[i + 1]
+        ctx2d.beginPath()
+        ctx2d.moveTo(mx - 3, my - 3); ctx2d.lineTo(mx + 3, my + 3)
+        ctx2d.stroke()
       }
 
       // ---- wavefront overlay ----

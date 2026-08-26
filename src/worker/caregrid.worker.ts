@@ -171,6 +171,8 @@ self.onmessage = async (ev: MessageEvent<ToWorker>): Promise<void> => {
     case 'SPEED': speedMult = msg.mult; break
     case 'DIRECTOR':
       if (!sim) break
+      running = true // director scripts auto-start the clock (demo path: click → sim runs)
+      startPump()
       if (msg.script === 'MOCK') sim.runMockScript()
       else if (msg.script === 'MCI') sim.runMciScript()
       else sim.runDisasterScript()

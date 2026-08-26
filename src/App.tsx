@@ -48,15 +48,15 @@ export default function App(): JSX.Element {
         case '1': actions.speed(1); break
         case '2': actions.speed(2); break
         case '3': actions.speed(5); break
-        case 'e': case 'E': actions.chaos('INJECT_ECHO'); break
-        case 'd': actions.chaos('INJECT_DELTA'); break
+        case 'e': case 'E': actions.chaos('INJECT_DELTA'); break
+        case 'd': case 'D': actions.chaos('INJECT_ECHO'); break
         case 'm': case 'M': actions.mode(!getSnapshot().manual); break
         case 'f': case 'F': window.dispatchEvent(new CustomEvent('caregrid:follow')); break
         case 'w': case 'W': actions.wavefront(!getSnapshot().wavefrontOn); break
         case 'r': case 'R': setReportOpen(true); break
         case '?': window.dispatchEvent(new CustomEvent('caregrid:shortcuts')); break
-        case '+': window.dispatchEvent(new CustomEvent('caregrid:zoom', { detail: 1.2 })); break
-        case '-': window.dispatchEvent(new CustomEvent('caregrid:zoom', { detail: 0.8 })); break
+        case '+': case '=': window.dispatchEvent(new CustomEvent('caregrid:zoom', { detail: 1.2 })); break
+        case '-': case '_': window.dispatchEvent(new CustomEvent('caregrid:zoom', { detail: 0.8 })); break
       }
     }
     window.addEventListener('keydown', onKey)

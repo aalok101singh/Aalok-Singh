@@ -1,7 +1,7 @@
 // CareGrid service worker — cache-first shell, network-first for /api/*.
 // Zero runtime data dependencies: world is generated in-worker, so the app
 // runs fully offline once cached.
-const CACHE = 'caregrid-v2'
+const CACHE = 'caregrid-v3'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon.svg']
 
 self.addEventListener('install', (e) => {
@@ -20,8 +20,9 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url)
   if (e.request.method !== 'GET' || url.origin !== location.origin) return
 
-  // Weather proxy: network-first with cache fallback, never block boot.
-  if (url.pathname.startsWith('/api/')) {
+  // Navigations (the app shell): network-first so deploys land immediately;
+  // cache is the offline fallback. Weather: network-first with cache fallback.
+  if (e.request.mode === 'navigate' || url.pathname.startsWith('/api/')) {
     e.respondWith(
       fetch(e.request)
         .then((res) => {
