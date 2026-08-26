@@ -15,12 +15,12 @@ export default function KpiStrip(): JSX.Element {
   const util = k?.utilization ?? 0
   return (
     <div className="flex h-12 items-center gap-5 border-t border-border bg-surface px-4 font-mono text-sm tnum">
-      <span className="font-display text-xs font-semibold uppercase tracking-wide text-muted">KPI</span>
-      <Metric label="P50" value={mmss(p50)} />
-      <Metric label="P90" value={mmss(p90)} />
-      <Metric label="SLA" value={`${sla}%`} good={sla >= 90} />
-      <Metric label="Util" value={`${util}%`} />
-      <Metric label="missions" value={String(k?.missionsCompleted ?? 0)} />
+      <span className="font-display text-xs font-semibold uppercase tracking-wide text-muted">Live</span>
+      <Metric label="typical response" value={mmss(p50)} />
+      <Metric label="slowest 10%" value={mmss(p90)} />
+      <Metric label="on-time" value={`${sla}%`} good={sla >= 90} />
+      <Metric label="fleet busy" value={`${util}%`} />
+      <Metric label="patients delivered" value={String(k?.missionsCompleted ?? 0)} />
       <button
         className="ml-auto rounded border border-border px-2 py-1 text-xs font-medium text-muted hover:text-primary"
         onClick={() => window.dispatchEvent(new CustomEvent('caregrid:report'))}

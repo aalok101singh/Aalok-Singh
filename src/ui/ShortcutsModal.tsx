@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 const SHORTCUTS: [string, string][] = [
   ['Space', 'pause / resume'],
-  ['1 – 5', 'speed 1× / 2× / 5× / 20× / 60×'],
+  ['1 / 2 / 3', 'speed 1× / 60× / 90×'],
   ['E', 'inject DELTA emergency'],
   ['D', 'inject ECHO emergency'],
   ['M', 'toggle AUTO / MANUAL dispatch'],

@@ -25,6 +25,17 @@ export default function App(): JSX.Element {
   const s = useSnapshot()
   const [tab, setTab] = useState<Tab>('requests')
   const [reportOpen, setReportOpen] = useState(false)
+  const [toast, setToast] = useState<{ id: number; text: string } | null>(null)
+  const lastEventId = useRef(-1)
+  useEffect(() => {
+    const last = s.events[s.events.length - 1]
+    if (last && last.id !== lastEventId.current) {
+      lastEventId.current = last.id
+      setToast({ id: last.id, text: last.text })
+      const t = setTimeout(() => setToast(null), 4500)
+      return () => clearTimeout(t)
+    }
+  }, [s.events])
   const booted = useRef(false)
   useEffect(() => {
     if (!booted.current) {
@@ -46,10 +57,8 @@ export default function App(): JSX.Element {
       switch (e.key) {
         case ' ': e.preventDefault(); s.running ? actions.pause() : actions.start(); break
         case '1': actions.speed(1); break
-        case '2': actions.speed(2); break
-        case '3': actions.speed(5); break
-        case '4': actions.speed(20); break
-        case '5': actions.speed(60); break
+        case '2': actions.speed(60); break
+        case '3': actions.speed(90); break
         case 'e': case 'E': actions.chaos('INJECT_DELTA'); break
         case 'd': case 'D': actions.chaos('INJECT_ECHO'); break
         case 'm': case 'M': actions.mode(!getSnapshot().manual); break
@@ -73,6 +82,11 @@ export default function App(): JSX.Element {
         <div className="relative min-w-0 flex-1">
           <MapCanvas />
           <ChaosPanel />
+          {toast && (
+            <div className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2 rounded-card border border-border bg-surface px-3 py-1.5 text-xs shadow-card">
+              {toast.text}
+            </div>
+          )}
           {!s.ready && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-bg/80 font-display text-sm">
               building district graph…

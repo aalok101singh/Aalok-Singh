@@ -30,6 +30,7 @@ export default function MapCanvas(): JSX.Element {
   const [zoomLabel, setZoomLabel] = useState(0.01)
   const [expandedN, setExpandedN] = useState(0)
   const [followOn, setFollowOn] = useState(false)
+  const [hover, setHover] = useState<{ x: number; y: number; title: string; sub: string } | null>(null)
 
   useEffect(() => {
     const unsub = onWavefront((settled, frontier) => {
@@ -107,6 +108,75 @@ export default function MapCanvas(): JSX.Element {
     window.addEventListener('caregrid:zoom', onZoomKey)
     window.addEventListener('caregrid:follow', onFollow)
 
+    // ---- hover tooltips: what am I looking at? ----
+    let mouseX = -1, mouseY = -1
+    let hoverKey = ''
+    const AMB_WORD: Record<string, string> = {
+      AVAILABLE: 'waiting at base', TO_SCENE: 'rushing to the patient', ON_SCENE: 'treating the patient',
+      TO_FACILITY: 'taking the patient to hospital', HANDOVER: 'handover at hospital',
+    }
+    const onHoverMove = (e: PointerEvent): void => {
+      const rect = canvas.getBoundingClientRect()
+      mouseX = e.clientX - rect.left
+      mouseY = e.clientY - rect.top
+    }
+    const onHoverLeave = (): void => { mouseX = -1; mouseY = -1 }
+    canvas.addEventListener('pointermove', onHoverMove)
+    canvas.addEventListener('pointerleave', onHoverLeave)
+    const pickHover = (): void => {
+      if (mouseX < 0) {
+        if (hoverKey) { hoverKey = ''; setHover(null) }
+        return
+      }
+      const geo = getGeometry()
+      const snap = getSnapshot()
+      if (!geo) return
+      const v = viewRef.current
+      const wpx = canvas.clientWidth, hpx = canvas.clientHeight
+      const near = (la: number, lo: number, r: number): [number, number] | null => {
+        const [x, y] = toScreen(v, la, lo, wpx, hpx)
+        return Math.hypot(x - mouseX, y - mouseY) <= r ? [x, y] : null
+      }
+      let found: { key: string; x: number; y: number; title: string; sub: string } | null = null
+      for (const emg of snap.emgs) {
+        if (emg.status === 'DELIVERED' || emg.status === 'UNREACHABLE') continue
+        const p = near(geo.lat[emg.villageNode], geo.lng[emg.villageNode], 13)
+        if (p) {
+          const minsLeft = Math.max(0, Math.ceil((emg.slaS - (snap.clockS - emg.filedAtS)) / 60))
+          found = { key: `e${emg.id}`, x: p[0], y: p[1], title: `${emg.villageName} — ${emg.urgency} patient`, sub: `needs ${emg.need.toLowerCase()} · ${minsLeft} min left of target` }
+          break
+        }
+      }
+      if (!found) {
+        for (const a of snap.ambs) {
+          const la = geo.lat[a.from] + (geo.lat[a.to] - geo.lat[a.from]) * a.t01
+          const lo = geo.lng[a.from] + (geo.lng[a.to] - geo.lng[a.from]) * a.t01
+          const p = near(la, lo, 14)
+          if (p) {
+            found = { key: `a${a.id}`, x: p[0], y: p[1], title: `${a.callsign} (${a.cls}) ambulance`, sub: AMB_WORD[a.state] ?? a.state }
+            break
+          }
+        }
+      }
+      if (!found) {
+        for (const f of geo.facilities) {
+          const p = near(geo.lat[f.node], geo.lng[f.node], 15)
+          if (p) {
+            const fd = snap.facilities.find((ff) => ff.id === f.id)
+            found = { key: `f${f.id}`, x: p[0], y: p[1], title: `${f.name} (${f.tier})`, sub: `beds free: ${fd ? `${fd.bedsFree}/${fd.bedsTotal}` : '?'} · green cross = hospital` }
+            break
+          }
+        }
+      }
+      const key = found?.key ?? ''
+      if (key !== hoverKey) {
+        hoverKey = key
+        setHover(found ? { x: found.x, y: found.y, title: found.title, sub: found.sub } : null)
+      } else if (found) {
+        setHover((h) => (h ? { ...h, x: found!.x, y: found!.y } : h))
+      }
+    }
+
     const toScreen = (v: View, la: number, lo: number, wpx: number, hpx: number): [number, number] => {
       const x = (lo - v.cx) * v.scale * 102000 + wpx / 2
       const y = (v.cy - la) * v.scale * 111320 + hpx / 2
@@ -115,6 +185,7 @@ export default function MapCanvas(): JSX.Element {
 
     const loop = (): void => {
       raf = requestAnimationFrame(loop)
+      pickHover()
       const geo = getGeometry()
       const snap = getSnapshot()
       const wpx = canvas.clientWidth, hpx = canvas.clientHeight
@@ -438,6 +509,8 @@ export default function MapCanvas(): JSX.Element {
       canvas.removeEventListener('dblclick', onDbl)
       window.removeEventListener('caregrid:zoom', onZoomKey)
       window.removeEventListener('caregrid:follow', onFollow)
+      canvas.removeEventListener('pointermove', onHoverMove)
+      canvas.removeEventListener('pointerleave', onHoverLeave)
     }
   }, [])
 
@@ -461,6 +534,15 @@ export default function MapCanvas(): JSX.Element {
           <div className="rounded-control border border-primary bg-primary-soft px-2 py-1 font-mono text-xs text-primary tnum">expanded: {expandedN}</div>
         )}
       </div>
+      {hover && (
+        <div
+          className="pointer-events-none absolute z-20 max-w-56 rounded-card border border-border bg-surface px-2.5 py-1.5 shadow-card"
+          style={{ left: Math.min(hover.x + 14, (canvasRef.current?.clientWidth ?? 400) - 230), top: Math.max(4, hover.y - 54) }}
+        >
+          <div className="text-xs font-semibold">{hover.title}</div>
+          <div className="text-[11px] text-muted">{hover.sub}</div>
+        </div>
+      )}
     </div>
   )
 }

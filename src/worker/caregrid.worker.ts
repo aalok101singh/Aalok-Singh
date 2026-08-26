@@ -15,7 +15,7 @@ let world: World | null = null
 let gv: GraphView | null = null
 let seed = 42
 let running = false
-let speedMult: 1 | 2 | 5 | 20 | 60 = 1
+let speedMult: 1 | 60 | 90 = 1
 let manualMode = false
 let clockS = 0
 let pumpTimer: ReturnType<typeof setInterval> | null = null
@@ -82,7 +82,7 @@ function tickOnce(): void {
   // 100ms pump; sim advances speedMult sim-seconds per wall-second in TICK_S steps,
   // catch-up capped at 30s for tab throttling (§8)
   const PUMP_MS = 100
-  accMs += PUMP_MS * Math.min(speedMult, 60)
+  accMs += PUMP_MS * Math.min(speedMult, 90)
   let guard = 120
   while (accMs >= CONST.TICK_S * 1000 && guard-- > 0) {
     accMs -= CONST.TICK_S * 1000
@@ -161,6 +161,7 @@ function postState(): void {
     events: s.events.slice(-40).map((ev) => ({ id: ev.id, tS: ev.tS, kind: ev.kind, text: ev.text, emgId: ev.emgId })),
     traces: s.traces.slice(-20),
     kpis,
+    completed: s.completed.slice(-8).reverse(),
     closedEdges: [...s.closedEdges].slice(0, 500),
     running, speedMult, manual: manualMode,
   })

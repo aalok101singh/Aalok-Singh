@@ -1,5 +1,8 @@
 // Typed worker message contracts (§9).
 import type { DecisionTrace, Facility, Mission } from '../engine/types'
+import type { SimCompleted } from '../engine/sim'
+
+export type CompletedView = SimCompleted
 
 export type ChaosAction =
   | 'INJECT_ECHO' | 'INJECT_DELTA' | 'INJECT_CHARLIE' | 'MASS_INFLUX_8' | 'STRESS_SURGE_1000'
@@ -61,7 +64,7 @@ export interface BenchResult {
 export type ToWorker =
   | { type: 'INIT'; world: 'osm' | 'procedural'; seed: number; preset: 'FULL' | 'MED' | 'DEMO' }
   | { type: 'START' } | { type: 'PAUSE' }
-  | { type: 'SPEED', mult: 1 | 2 | 5 | 20 | 60 }
+  | { type: 'SPEED', mult: 1 | 60 | 90 }
   | { type: 'DIRECTOR', script: 'MOCK' | 'MCI' | 'DISASTER' }
   | { type: 'CHAOS', action: ChaosAction }
   | { type: 'MODE', manual: boolean }
@@ -83,6 +86,7 @@ export interface StateMsg {
   events: { id: number; tS: number; kind: string; text: string; emgId?: number }[]
   traces: DecisionTrace[]
   kpis: KpiView
+  completed: CompletedView[]
   closedEdges: number[]
   running: boolean
   speedMult: number

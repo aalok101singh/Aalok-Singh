@@ -1,6 +1,6 @@
 // ~60-line event store (D4): worker diffs -> snapshot -> useSyncExternalStore.
 import type { DecisionTrace } from '../engine/types'
-import type { AmbDelta, BenchResult, EmgView, FacDelta, FromWorker, KpiView, WorldStats } from '../worker/protocol'
+import type { AmbDelta, BenchResult, CompletedView, EmgView, FacDelta, FromWorker, KpiView, WorldStats } from '../worker/protocol'
 
 export interface SimEventView { id: number; tS: number; kind: string; text: string; emgId?: number }
 
@@ -18,6 +18,7 @@ export interface Snapshot {
   events: SimEventView[]
   traces: DecisionTrace[]
   kpis: KpiView | null
+  completed: CompletedView[]
   closedEdges: number[]
   recommendation: DecisionTrace | null
   bench: BenchResult | null
@@ -32,7 +33,7 @@ const initial: Snapshot = {
   ready: false, worldStats: null, facilities: [], clockS: 0,
   running: false, speedMult: 1, manual: false,
   ambs: [], emgs: [], facDeltas: [], events: [], traces: [],
-  kpis: null, closedEdges: [], recommendation: null, bench: null,
+  kpis: null, completed: [], closedEdges: [], recommendation: null, bench: null,
   wavefrontOn: false, ariaAnnounce: '', scenario: 'Free run', batchOptimalOn: true, ambientOn: true,
 }
 
@@ -85,7 +86,7 @@ export function ensureWorker(): Worker {
         set({
           clockS: m.clockS, running: m.running, speedMult: m.speedMult, manual: m.manual,
           ambs: m.ambs, emgs: m.emgs, facDeltas: m.facDeltas,
-          events: m.events, traces: m.traces, kpis: m.kpis, closedEdges: m.closedEdges,
+          events: m.events, traces: m.traces, kpis: m.kpis, completed: m.completed, closedEdges: m.closedEdges,
           ariaAnnounce: lastEv && lastEv.kind === 'DISPATCH' ? lastEv.text : snap.ariaAnnounce,
         })
         break
@@ -106,7 +107,7 @@ const send = (msg: Parameters<Worker['postMessage']>[0]): void => { worker?.post
 export const actions = {
   start: (): void => send({ type: 'START' }),
   pause: (): void => send({ type: 'PAUSE' }),
-  speed: (mult: 1 | 2 | 5 | 20 | 60): void => send({ type: 'SPEED', mult }),
+  speed: (mult: 1 | 60 | 90): void => send({ type: 'SPEED', mult }),
   director: (script: 'MOCK' | 'MCI' | 'DISASTER'): void => {
     set({ scenario: script === 'MOCK' ? 'Official Mock' : script === 'MCI' ? 'Mass Casualty (MCI)' : 'Monsoon Disaster' })
     send({ type: 'DIRECTOR', script })

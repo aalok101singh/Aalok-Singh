@@ -44,6 +44,13 @@ export interface Kpis {
   costSum: { responseS: number; onSceneS: number; transportS: number; waitS: number }
 }
 
+/** Recently finished mission, kept for the feed's "delivered" cards + per-mission report download. */
+export interface SimCompleted {
+  id: number; village: string; urgency: string; callsign: string; facility: string
+  responseS: number; onSceneS: number; transportS: number; waitS: number
+  deliveredS: number; onTime: boolean
+}
+
 const URG_DIST: [Urgency, number][] = [['ECHO', 5], ['DELTA', 15], ['CHARLIE', 25], ['BRAVO', 30], ['ALPHA', 25]]
 const SPEC_WEIGHTS: [Specialty, number][] = [
   ['GENERAL', 34], ['CARDIOLOGY', 16], ['OBSTETRIC', 18], ['PEDIATRIC', 14], ['SURGERY', 10], ['TRAUMA', 8],
@@ -72,6 +79,7 @@ export class SimEngine {
 
   emergencies = new Map<number, RuntimeEmergency>()
   missions = new Map<number, MissionRuntime>()
+  completed: SimCompleted[] = []
   closedEdges = new Set<number>()
   events: SimEvent[] = []
   traces: DecisionTrace[] = []
@@ -102,6 +110,7 @@ export class SimEngine {
     this.closedEdges.clear()
     this.events = []
     this.traces = []
+    this.completed = []
     this.kpis = emptyKpis()
     this.nextArrivalS = 60 + expSeconds(this.rng, CONST.ARRIVALS_MEAN_S)
     this.restockAtS = CONST.RESTOCK_PERIOD_S
@@ -491,6 +500,20 @@ export class SimEngine {
     k.costSum.transportS += mr.m.cost.transportS
     k.costSum.waitS += mr.m.cost.waitS
     if (emg) emg.status = 'DELIVERED'
+    this.completed.push({
+      id: mr.m.id,
+      village: emg ? (this.world.villages.find((vv) => vv.node === emg.village)?.name ?? `node ${emg.village}`) : 'unknown',
+      urgency: tier,
+      callsign: this.world.ambulances[mr.m.amb].callsign,
+      facility: this.world.facilities[mr.m.facility].name,
+      responseS: resp,
+      onSceneS: mr.m.cost.onSceneS,
+      transportS: mr.m.cost.transportS,
+      waitS: mr.m.cost.waitS,
+      deliveredS: this.clockS,
+      onTime: resp <= CONST.SLA_S[tier],
+    })
+    if (this.completed.length > 12) this.completed.shift()
   }
 
   push(kind: SimEvent['kind'], text: string, emgId?: number, trace?: DecisionTrace): void {
@@ -512,11 +535,23 @@ export class SimEngine {
         for (let i = 0; i < 8; i++) this.spawnRandomEmergency()
         return 'mass influx ×8'
       case 'CLOSE_RANDOM_ROAD': {
-        const idx = this.randomEdgeIndex()
+        // prefer a road on an active mission's remaining route — closure + live reroute in one click
+        const active = [...this.missions.values()].filter((m) => m.leg === 'TO_SCENE' || m.leg === 'TO_FACILITY')
+        let idx = this.randomEdgeIndex()
+        let via = ''
+        if (active.length > 0) {
+          const mr = active[(this.rng() * active.length) | 0]
+          const ahead = this.edgeAheadOf(mr)
+          if (ahead !== undefined) {
+            idx = ahead
+            via = ` on ${this.world.ambulances[mr.m.amb].callsign}'s route`
+            this.rerouteFrom(mr)
+          }
+        }
         this.closedEdges.add(idx)
         this.checkActivePaths()
-        this.push('CLOSURE', `road closure: edge #${idx}`)
-        return 'road closed'
+        this.push('CLOSURE', `road blocked${via} — traffic rerouting`)
+        return 'road blocked'
       }
       case 'SEVER_ACTIVE_MISSION_ROAD': {
         const active = [...this.missions.values()].filter((m) => m.leg === 'TO_SCENE' || m.leg === 'TO_FACILITY')
