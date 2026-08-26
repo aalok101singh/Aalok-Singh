@@ -1,7 +1,7 @@
 // CareGrid service worker — cache-first shell, network-first for /api/*.
 // Zero runtime data dependencies: world is generated in-worker, so the app
 // runs fully offline once cached.
-const CACHE = 'caregrid-v1'
+const CACHE = 'caregrid-v2'
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon.svg']
 
 self.addEventListener('install', (e) => {
