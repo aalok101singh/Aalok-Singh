@@ -12,7 +12,7 @@ export class SpatialIndex {
   private ambCell: Int32Array // ambId -> cellKey
   private minLat = Infinity; private minLng = Infinity
 
-  constructor(private g: GraphView, private capacity: number) {
+  constructor(private g: GraphView, capacity: number) {
     this.cellH = CELL_DEG_LAT
     this.cellW = CELL_DEG_LNG
     this.ambCell = new Int32Array(capacity).fill(-1)

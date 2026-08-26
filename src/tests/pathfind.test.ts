@@ -94,7 +94,7 @@ describe('pathfinders on DEMO procedural world', () => {
     // close every edge incident to node 0's first hop along path -> must reroute or fail, never crash
     const closed = new Set<number>()
     for (let e = w.adjOff[r0.path[0]]; e < w.adjOff[r0.path[0] + 1]; e++) closed.add(e)
-    const r1 = astar(gv, 0, 1, closed)
+    const r1 = astar(gv, 0, 1, { closed })
     expect(r1.found === false || r1.dist >= r0.dist).toBe(true)
   })
 })

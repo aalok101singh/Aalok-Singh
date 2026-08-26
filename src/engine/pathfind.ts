@@ -1,6 +1,8 @@
 import { MinHeap } from './heap'
 import type { NodeId, PathResult } from './types'
 
+export type { PathResult }
+
 export interface GraphView {
   nodeCount: number
   lat: Float64Array; lng: Float64Array
@@ -22,11 +24,27 @@ function reconstruct(parent: Int32Array, t: NodeId): NodeId[] {
   return path[0] !== undefined && guard > 0 ? path : []
 }
 
+export interface PathOpts {
+  closed?: Set<number> | null
+  weatherMult?: number
+  nodeMult?: Float32Array // per-node weather multiplier; edge uses max(endpoints)
+  /** Wavefront streaming (§10.3): sampled settled+frontier ids; return false to abort early. */
+  onProgress?: (settled: number[], frontier: number[]) => void
+}
+
+function effMult(u: number, v: number, o: PathOpts): number {
+  const wm = o.weatherMult ?? 1
+  const nm = o.nodeMult
+  if (!nm || (nm[u] === 1 && nm[v] === 1)) return wm
+  return Math.max(wm, nm[u], nm[v])
+}
+
 /** Dijkstra with early exit at target. O((V+E) log V). */
 export function dijkstra(
   g: GraphView, s: NodeId, t: NodeId | null,
-  closed?: Set<number> | null, weatherMult = 1,
+  opts?: PathOpts,
 ): PathResult {
+  const closed = opts?.closed ?? null
   const t0 = performance.now()
   const stats = { ms: 0, expanded: 0, relaxed: 0, heapOps: 0 }
   const n = g.nodeCount
@@ -47,7 +65,7 @@ export function dijkstra(
     for (let e = g.adjOff[u]; e < g.adjOff[u + 1]; e++) {
       if (closed?.has(e)) continue // closed edge index — no rebuild (§8)
       const v = g.adjDst[e]
-      const nd = k + g.adjW[e] * weatherMult
+      const nd = k + g.adjW[e] * effMult(u, v, opts ?? {})
       if (nd < best[v]) {
         best[v] = nd; dist[v] = nd; parent[v] = u
         heap.push(nd, v); stats.heapOps++
@@ -66,8 +84,9 @@ export function dijkstra(
 /** Bidirectional Dijkstra: alternate fronts; stop when topF + topB >= bestMeet. */
 export function bidirectional(
   g: GraphView, s: NodeId, t: NodeId,
-  closed?: Set<number> | null, weatherMult = 1,
+  opts?: PathOpts,
 ): PathResult {
+  const closed = opts?.closed ?? null
   const t0 = performance.now()
   const stats = { ms: 0, expanded: 0, relaxed: 0, heapOps: 0 }
   const n = g.nodeCount
@@ -108,7 +127,7 @@ export function bidirectional(
       for (let e = g.adjOff[u]; e < g.adjOff[u + 1]; e++) {
         if (closed?.has(e)) continue
         const v = g.adjDst[e]
-        const nd = k + g.adjW[e] * weatherMult
+        const nd = k + g.adjW[e] * effMult(u, v, opts ?? {})
         if (nd < dF[v]) { dF[v] = nd; pF[v] = u; hF.push(nd, v); stats.heapOps++ }
         stats.relaxed++
       }
@@ -121,7 +140,7 @@ export function bidirectional(
       for (let e = radjOff[u]; e < radjOff[u + 1]; e++) {
         if (closed?.has(radjFwdIdx[e])) continue
         const v = radjDst[e]
-        const nd = k + radjW[e] * weatherMult
+        const nd = k + radjW[e] * effMult(u, v, opts ?? {})
         if (nd < dB[v]) { dB[v] = nd; pB[v] = u; hB.push(nd, v); stats.heapOps++ }
         stats.relaxed++
       }
@@ -148,8 +167,9 @@ function stitch(pF: Int32Array, pB: Int32Array, meet: number): NodeId[] {
 /** A* with admissible heuristic haversine / 60 km-h max speed (§6.2.4). */
 export function astar(
   g: GraphView, s: NodeId, t: NodeId,
-  closed?: Set<number> | null, weatherMult = 1,
+  opts?: PathOpts,
 ): PathResult {
+  const closed = opts?.closed ?? null
   const t0 = performance.now()
   const stats = { ms: 0, expanded: 0, relaxed: 0, heapOps: 0 }
   const n = g.nodeCount
@@ -162,6 +182,7 @@ export function astar(
   gScore[s] = 0
   heap.push(hv(s), s)
   let found = false
+  let sinceSample = 0
   while (heap.size > 0) {
     const top = heap.pop()!
     stats.heapOps++
@@ -172,7 +193,7 @@ export function astar(
     for (let e = g.adjOff[u]; e < g.adjOff[u + 1]; e++) {
       if (closed?.has(e)) continue
       const v = g.adjDst[e]
-      const tentative = gScore[u] + g.adjW[e] * weatherMult
+      const tentative = gScore[u] + g.adjW[e] * effMult(u, v, opts ?? {})
       if (tentative < gScore[v]) {
         gScore[v] = tentative
         parent[v] = u
@@ -181,6 +202,13 @@ export function astar(
         heap.push(f, v); stats.heapOps++
       }
       stats.relaxed++
+    }
+    if (opts?.onProgress && ++sinceSample >= 256) {
+      sinceSample = 0
+      const settled: number[] = [], frontier: number[] = []
+      for (let i = 0; i < n && settled.length < 2048; i++) if (closedStale[i] < INF) settled.push(i)
+      for (let i = heap.size - 1; i >= 0 && frontier.length < 1024; i--) frontier.push((heap as unknown as { vals: Int32Array }).vals[i])
+      opts.onProgress(settled, frontier)
     }
   }
   return {
